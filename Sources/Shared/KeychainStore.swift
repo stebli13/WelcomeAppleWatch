@@ -1,0 +1,70 @@
+import Foundation
+import Security
+
+/// OAuth tokens for the myBUILDINGS session. Secret — Keychain only, never in
+/// the repo, UserDefaults, or logs.
+struct GateCredentials: Codable, Equatable {
+    var accessToken: String
+    var refreshToken: String
+    /// Absolute expiry of `accessToken`.
+    var expiresAt: Date
+
+    var isExpired: Bool { Date() >= expiresAt.addingTimeInterval(-30) }
+}
+
+/// Everything the watch needs to open the door on its own, sent once from the
+/// iPhone over WatchConnectivity and stored in the watch Keychain.
+struct GatePairingPayload: Codable, Equatable {
+    var configuration: GateConfiguration
+    var credentials: GateCredentials
+}
+
+/// Minimal Codable wrapper over the iOS/watchOS Keychain.
+enum KeychainStore {
+    private static let service = "com.example.welcomegate"
+
+    static func save<T: Encodable>(_ value: T, key: String) throws {
+        let data = try JSONEncoder().encode(value)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(query as CFDictionary)
+        var attributes = query
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] =
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw GateError.decoding("Keychain write failed (\(status))")
+        }
+    }
+
+    static func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    static func delete(key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // Convenience keys.
+    static let credentialsKey = "gate.credentials"
+    static let configurationKey = "gate.configuration"
+}

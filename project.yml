@@ -1,0 +1,48 @@
+name: WelcomeGate
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+    watchOS: "10.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    GENERATE_INFOPLIST_FILE: YES
+    # Set your Apple Developer team here (or in Xcode → Signing & Capabilities).
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  # ---- iPhone companion app (auth / pairing / push to watch) ----
+  WelcomeGate:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/iOS
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.welcomegate
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Welcome Gate
+    dependencies:
+      - target: WelcomeGate Watch App
+        embed: true
+
+  # ---- Apple Watch app (the actual gate button) ----
+  WelcomeGate Watch App:
+    type: application
+    platform: watchOS
+    sources:
+      - Sources/Watch
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.welcomegate.watchkitapp
+        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: com.example.welcomegate
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Welcome Gate

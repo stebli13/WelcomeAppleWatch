@@ -1,0 +1,15 @@
+# Xcode / build
+*.xcodeproj
+!project.yml
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+
+# Secrets must never be committed. The real tokens/IDs live in the Keychain
+# on-device, entered through the iPhone app. If you keep a local notes file of
+# your captured values, name it like this so it stays out of git:
+*.secrets
+capture-values.local.*
+mitmproxy-flows/
