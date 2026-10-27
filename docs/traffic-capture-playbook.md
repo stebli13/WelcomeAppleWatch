@@ -1,9 +1,16 @@
+# Fallback: capture what your ABB-Welcome app does
+
+> **v1 does not need this** — the watch app goes through Home Assistant
+> (`home-assistant-setup.md`). Use this playbook only to answer the open
+> questions in `abb-welcome-protocol.md`: how the **Relè** are triggered and how
+> the app unlocks from outside the home. The app may use SIP rather than HTTPS
+> for the unlock, in which case a proxy will show little; capture the portal
+> (`*.mybuildings.abb.com`) traffic and note what happens when you tap a relay.
+
 # One-time capture: extract your ABB-Welcome door-open call
 
-This is the single manual step that turns the placeholders in
-`abb-welcome-protocol.md` into real values. ~20 minutes, no jailbreak.
-You are recording **your own** app making **your own** door-open request so a
-watch client can replay it. Do it on your home Wi-Fi.
+About 20 minutes, no jailbreak. You are recording **your own** app making **your
+own** requests to learn how it triggers a relay. Do it on your home Wi-Fi.
 
 ## You need
 - A Mac or PC on the **same Wi-Fi** as your iPhone.

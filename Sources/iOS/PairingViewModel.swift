@@ -1,39 +1,30 @@
 import Foundation
 import SwiftUI
 
-/// Drives the iPhone setup screens: collect the captured configuration (cloud
-/// endpoint, relays, outdoor stations) and a current access/refresh token, test
-/// each relay, persist, and push everything to the watch.
-///
-/// This is the v1 bootstrap path: you fill it from your traffic capture
-/// (docs/traffic-capture-playbook.md). Once the exact ABB OAuth endpoints are
-/// confirmed, a proper "Sign in to myBUILDINGS" flow can replace manual token
-/// entry — the rest of the app stays the same.
+/// Drives the iPhone setup screens: Home Assistant address and token, which
+/// entity each relay fires and which picture each station uses; test each
+/// relay, persist, and push everything to the watch.
 @MainActor
 final class PairingViewModel: ObservableObject {
     @Published var config: GateConfiguration
-    @Published var accessToken: String = ""
-    @Published var refreshToken: String = ""
-    /// Access-token lifetime in seconds (from the token response `expires_in`).
-    @Published var expiresInSeconds: String = "3600"
+    @Published var token: String = ""
+
+    @Published private(set) var entities: [HAEntity] = []
+    @Published private(set) var entitiesStatus: String?
+    @Published private(set) var isLoadingEntities = false
 
     @Published private(set) var testResults: [Relay.ID: String] = [:]
     @Published private(set) var testingRelayID: Relay.ID?
 
     init() {
-        let stored = GateStore.loadConfiguration()
-        config = stored.isComplete ? stored : .placeholder
-        if let creds = GateStore.loadCredentials() {
-            accessToken = creds.accessToken
-            refreshToken = creds.refreshToken
-        }
+        config = GateStore.loadConfiguration()
+        token = GateStore.loadCredentials()?.token ?? ""
     }
 
     // MARK: - Editing
 
     func addRelay() {
-        config.relays.append(Relay(name: "Nuovo relè", deviceID: "",
-                                   channelID: "", datapointID: ""))
+        config.relays.append(Relay(name: "Nuovo relè", entityID: ""))
     }
 
     func deleteRelays(at offsets: IndexSet) {
@@ -46,23 +37,43 @@ final class PairingViewModel: ObservableObject {
 
     func addStation() {
         config.stations.append(OutdoorStation(name: "Posto esterno",
-                                              snapshotPath: nil, relayIDs: []))
+                                              pictureEntityID: nil, relayIDs: []))
     }
 
     func deleteStations(at offsets: IndexSet) {
         config.stations.remove(atOffsets: offsets)
     }
 
+    // MARK: - Connection
+
+    var hasConnection: Bool { config.hasValidBaseURL && !token.isEmpty }
+
+    private var client: HomeAssistantClient {
+        HomeAssistantClient(configuration: config, token: token)
+    }
+
+    func loadEntities() async {
+        guard hasConnection else {
+            entitiesStatus = "Inserisci indirizzo e token di Home Assistant."
+            return
+        }
+        isLoadingEntities = true
+        entitiesStatus = nil
+        do {
+            entities = try await client.entities()
+            entitiesStatus = "✅ Connesso: \(entities.count) entità trovate."
+        } catch {
+            entitiesStatus = "❌ \((error as? GateError)?.errorDescription ?? error.localizedDescription)"
+        }
+        isLoadingEntities = false
+    }
+
     // MARK: - Saving / syncing
 
     private func buildPayload() -> GatePairingPayload? {
-        guard config.isComplete, !accessToken.isEmpty else { return nil }
-        let ttl = TimeInterval(expiresInSeconds) ?? 3600
-        let creds = GateCredentials(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            expiresAt: Date().addingTimeInterval(ttl))
-        return GatePairingPayload(configuration: config, credentials: creds)
+        guard config.isComplete, !token.isEmpty else { return nil }
+        return GatePairingPayload(configuration: config,
+                                  credentials: GateCredentials(token: token))
     }
 
     var canSave: Bool { buildPayload() != nil }
@@ -76,22 +87,17 @@ final class PairingViewModel: ObservableObject {
     // MARK: - Testing
 
     func test(_ relay: Relay) async {
-        guard let payload = buildPayload() else {
-            testResults[relay.id] = "Compila tutti i campi e il token prima."
+        guard hasConnection, relay.isComplete else {
+            testResults[relay.id] = "Scegli prima l’entità e inserisci indirizzo e token."
             return
         }
         testingRelayID = relay.id
         testResults[relay.id] = nil
-        let client = ABBWelcomeCloudClient(
-            configuration: payload.configuration,
-            credentials: payload.credentials)
         do {
             try await client.activate(relay)
-            testResults[relay.id] = "✅ Comando inviato. Ora tocca “Invia al Watch”."
+            testResults[relay.id] = "✅ Comando inviato."
         } catch {
-            let message = (error as? GateError)?.errorDescription
-                ?? error.localizedDescription
-            testResults[relay.id] = "❌ \(message)"
+            testResults[relay.id] = "❌ \((error as? GateError)?.errorDescription ?? error.localizedDescription)"
         }
         testingRelayID = nil
     }

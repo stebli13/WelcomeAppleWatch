@@ -25,22 +25,15 @@ enum GateStore {
                                key: KeychainStore.credentialsKey)
     }
 
-    static func saveCredentials(_ credentials: GateCredentials) {
-        try? KeychainStore.save(credentials, key: KeychainStore.credentialsKey)
-    }
-
     static func clear() {
         KeychainStore.delete(key: KeychainStore.configurationKey)
         KeychainStore.delete(key: KeychainStore.credentialsKey)
     }
 
-    /// Builds a cloud client from stored state, or nil if not paired.
-    /// Persists any refreshed credentials back to the Keychain automatically.
+    /// Builds a client from stored state, or nil if not paired.
     static func makeClient() -> GateClient? {
         guard isPaired, let credentials = loadCredentials() else { return nil }
-        return ABBWelcomeCloudClient(
-            configuration: loadConfiguration(),
-            credentials: credentials,
-            onCredentialsUpdated: { updated in saveCredentials(updated) })
+        return HomeAssistantClient(configuration: loadConfiguration(),
+                                   token: credentials.token)
     }
 }

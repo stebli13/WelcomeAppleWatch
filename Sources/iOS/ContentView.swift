@@ -7,12 +7,25 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Cloud ABB Welcome") {
-                    LabeledField("API base URL", text: $model.config.apiBase)
-                    LabeledField("OAuth token URL", text: $model.config.oauthTokenURL)
-                    LabeledField("Refresh URL", text: $model.config.refreshURL)
-                    LabeledField("Client ID", text: $model.config.clientID)
-                    LabeledField("SmartAP UUID", text: $model.config.smartApUUID)
+                Section {
+                    LabeledField("Indirizzo", text: $model.config.baseURL)
+                    LabeledField("Token", text: $model.token, secure: true)
+                    Button {
+                        Task { await model.loadEntities() }
+                    } label: {
+                        HStack {
+                            Label("Collega e carica entità", systemImage: "link")
+                            if model.isLoadingEntities { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(!model.hasConnection || model.isLoadingEntities)
+                    if let status = model.entitiesStatus {
+                        Text(status).font(.footnote)
+                    }
+                } header: {
+                    Text("Home Assistant")
+                } footer: {
+                    Text("Il token si crea in Home Assistant: Profilo → Sicurezza → Token di accesso di lunga durata. Vedi docs/home-assistant-setup.md.")
                 }
 
                 Section("Relè") {
@@ -36,17 +49,11 @@ struct ContentView: View {
                 Section("Posto esterno") {
                     ForEach($model.config.stations) { $station in
                         NavigationLink(station.name) {
-                            StationEditor(station: $station, relays: model.config.relays)
+                            StationEditor(station: $station, model: model)
                         }
                     }
                     .onDelete(perform: model.deleteStations)
                     Button("Aggiungi posto esterno", systemImage: "plus", action: model.addStation)
-                }
-
-                Section("Sessione (dalla cattura)") {
-                    LabeledField("Access token", text: $model.accessToken, secure: true)
-                    LabeledField("Refresh token", text: $model.refreshToken, secure: true)
-                    LabeledField("Scade tra (sec)", text: $model.expiresInSeconds)
                 }
 
                 Section {
@@ -64,7 +71,7 @@ struct ContentView: View {
                         Text("Watch raggiungibile").font(.footnote).foregroundStyle(.green)
                     }
                 } footer: {
-                    Text("I valori arrivano dalla cattura una tantum: vedi docs/traffic-capture-playbook.md. I token restano nel Portachiavi e vengono sincronizzati cifrati sul Watch.")
+                    Text("Il token resta nel Portachiavi e viene sincronizzato cifrato sul Watch.")
                 }
             }
             .navigationTitle("Welcome Gate")
@@ -81,11 +88,21 @@ struct RelayEditor: View {
             Section("Relè") {
                 LabeledField("Nome", text: $relay.name)
             }
-            Section("Indirizzo (dalla cattura)") {
-                LabeledField("Device ID", text: $relay.deviceID)
-                LabeledField("Channel ID", text: $relay.channelID)
-                LabeledField("Datapoint ID", text: $relay.datapointID)
-                LabeledField("Valore apertura", text: $relay.openValue)
+            Section("Entità Home Assistant") {
+                LabeledField("Entity ID", text: $relay.entityID)
+                NavigationLink("Scegli dall’elenco") {
+                    EntityPicker(
+                        title: "Entità",
+                        entities: model.entities,
+                        domains: ["button", "switch", "lock", "cover", "light",
+                                  "script", "scene", "input_boolean", "automation"],
+                        selection: $relay.entityID)
+                }
+                .disabled(model.entities.isEmpty)
+                if model.entities.isEmpty {
+                    Text("Tocca “Collega e carica entità” nella schermata principale per usare l’elenco.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             Section {
                 Button {
@@ -96,7 +113,7 @@ struct RelayEditor: View {
                         if model.testingRelayID == relay.id { Spacer(); ProgressView() }
                     }
                 }
-                .disabled(!model.canSave || model.testingRelayID != nil)
+                .disabled(!model.hasConnection || !relay.isComplete || model.testingRelayID != nil)
 
                 if let result = model.testResults[relay.id] {
                     Text(result).font(.footnote)
@@ -109,18 +126,30 @@ struct RelayEditor: View {
 
 struct StationEditor: View {
     @Binding var station: OutdoorStation
-    let relays: [Relay]
+    @ObservedObject var model: PairingViewModel
 
     var body: some View {
         Form {
             Section("Posto esterno") {
                 LabeledField("Nome", text: $station.name)
-                LabeledField("Percorso foto", text: Binding(
-                    get: { station.snapshotPath ?? "" },
-                    set: { station.snapshotPath = $0.isEmpty ? nil : $0 }))
+            }
+            Section("Foto (opzionale)") {
+                LabeledField("Entity ID", text: Binding(
+                    get: { station.pictureEntityID ?? "" },
+                    set: { station.pictureEntityID = $0.isEmpty ? nil : $0 }))
+                NavigationLink("Scegli dall’elenco") {
+                    EntityPicker(
+                        title: "Telecamera",
+                        entities: model.entities,
+                        domains: ["camera", "image"],
+                        selection: Binding(
+                            get: { station.pictureEntityID ?? "" },
+                            set: { station.pictureEntityID = $0.isEmpty ? nil : $0 }))
+                }
+                .disabled(model.entities.isEmpty)
             }
             Section("Relè mostrati su questo posto esterno") {
-                ForEach(relays) { relay in
+                ForEach(model.config.relays) { relay in
                     Toggle(relay.name, isOn: Binding(
                         get: { station.relayIDs.contains(relay.id) },
                         set: { isOn in
@@ -131,6 +160,52 @@ struct StationEditor: View {
             }
         }
         .navigationTitle(station.name)
+    }
+}
+
+/// Searchable list of Home Assistant entities, limited to the given domains.
+struct EntityPicker: View {
+    let title: String
+    let entities: [HAEntity]
+    let domains: [String]
+    @Binding var selection: String
+    @State private var query = ""
+    @Environment(\.dismiss) private var dismiss
+
+    private var visible: [HAEntity] {
+        entities.filter { entity in
+            guard let domain = entity.entityID.split(separator: ".").first,
+                  domains.contains(String(domain)) else { return false }
+            return query.isEmpty
+                || entity.name.localizedCaseInsensitiveContains(query)
+                || entity.entityID.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        List(visible) { entity in
+            Button {
+                selection = entity.entityID
+                dismiss()
+            } label: {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(entity.name)
+                        Text(entity.entityID).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if entity.entityID == selection {
+                        Image(systemName: "checkmark").foregroundStyle(.blue)
+                    }
+                }
+            }
+            .foregroundStyle(.primary)
+        }
+        .searchable(text: $query, prompt: "Cerca (es. cancello)")
+        .navigationTitle(title)
+        .overlay {
+            if visible.isEmpty { ContentUnavailableView.search }
+        }
     }
 }
 

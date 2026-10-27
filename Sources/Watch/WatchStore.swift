@@ -96,7 +96,7 @@ final class WatchStore: ObservableObject {
     }
 
     func refreshSnapshot(of station: OutdoorStation) async {
-        guard station.snapshotPath != nil,
+        guard station.pictureEntityID != nil,
               let client = GateStore.makeClient() else { return }
         if let data = try? await client.snapshot(of: station) {
             snapshots[station.id] = data

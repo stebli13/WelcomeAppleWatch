@@ -1,11 +1,9 @@
 import Foundation
 
-/// Abstraction over the ABB-Welcome actions the apps expose, independent of
-/// transport.
+/// Abstraction over the actions the apps expose, independent of transport.
 ///
-/// v1 ships `ABBWelcomeCloudClient` (works anywhere via the myBUILDINGS cloud).
-/// A future `ABBWelcomeLocalSIPClient` (home Wi-Fi, ~50 ms) can conform to the
-/// same protocol so the UI never changes.
+/// v1 ships `HomeAssistantClient`. A direct SIP client for the ABB gateway can
+/// conform to the same protocol later without touching the UI.
 protocol GateClient {
     /// Fire a relay (gate, garage door, …). Returns when the service has
     /// accepted the command; throws `GateError` otherwise.
