@@ -19,7 +19,8 @@ docs/traffic-capture-playbook.md        The one manual step: capture it once.
 project.yml                             XcodeGen manifest (iOS + watchOS apps).
 Sources/Shared/                         GateClient, ABB cloud client, Keychain.
 Sources/iOS/                            iPhone companion (pair / test / sync).
-Sources/Watch/                          The watch app (the Open button).
+Sources/Watch/                          The watch app (Home, Dispositivi,
+                                        Controllo accessi screens).
 ```
 
 ## How it works
@@ -31,11 +32,16 @@ Apple Watch ──(Bearer token)──▶ ABB Welcome IP cloud ──▶ your do
   iPhone companion  ◀── you paste values from a one-time traffic capture
 ```
 
-- **iPhone app**: you enter the endpoint + door-opener IDs + a current token
-  from your capture, tap **Test** to confirm the door opens, then **Send to
-  Watch**.
-- **Watch app**: one big **Open** button; calls the cloud directly and refreshes
-  its token automatically. Haptic + checkmark on success.
+- **iPhone app**: you enter the cloud endpoint, each relay's IDs (e.g.
+  *Cancello-citofono*, *Basculante-citofono*), the outdoor station and a
+  current token from your capture, tap **Prova** on a relay to confirm it
+  fires, then **Invia al Watch**.
+- **Watch app**: mirrors the iPhone Welcome App's screens — **Controllo
+  accessi** (Relè + Posto esterno, opens first), **Dispositivi** (station
+  tile with picture) and **Home** (Preferiti for one-tap opening). Switch
+  screens with the Digital Crown. Tap a relay for its big **Apri** button, or
+  swipe it left to open straight from the list. Calls the cloud directly and
+  refreshes its token automatically; haptic + green check on success.
 - Swap in a local-LAN (SIP) fast-path later behind the same `GateClient`.
 
 ## Build & install (needs a Mac with Xcode — Apple requirement)

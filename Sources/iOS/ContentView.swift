@@ -7,78 +7,158 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("ABB Welcome cloud endpoint") {
-                    field("API base URL", $model.config.apiBase)
-                    field("OAuth token URL", $model.config.oauthTokenURL)
-                    field("Refresh URL", $model.config.refreshURL)
-                    field("Client ID", $model.config.clientID)
-                }
-                Section("Door opener addressing") {
-                    field("SmartAP UUID", $model.config.smartApUUID)
-                    field("Device ID", $model.config.deviceID)
-                    field("Channel ID", $model.config.channelID)
-                    field("Datapoint ID", $model.config.datapointID)
-                    field("Open value", $model.config.openValue)
-                }
-                Section("Session (from your capture)") {
-                    secureField("Access token", $model.accessToken)
-                    secureField("Refresh token", $model.refreshToken)
-                    field("Expires in (sec)", $model.expiresInSeconds)
+                Section("Cloud ABB Welcome") {
+                    LabeledField("API base URL", text: $model.config.apiBase)
+                    LabeledField("OAuth token URL", text: $model.config.oauthTokenURL)
+                    LabeledField("Refresh URL", text: $model.config.refreshURL)
+                    LabeledField("Client ID", text: $model.config.clientID)
+                    LabeledField("SmartAP UUID", text: $model.config.smartApUUID)
                 }
 
-                Section {
-                    Button {
-                        Task { await model.testOpen() }
-                    } label: {
-                        HStack {
-                            Label("Test: open the door now", systemImage: "lock.open")
-                            if model.isTesting { Spacer(); ProgressView() }
+                Section("Relè") {
+                    ForEach($model.config.relays) { $relay in
+                        NavigationLink {
+                            RelayEditor(relay: $relay, model: model)
+                        } label: {
+                            HStack {
+                                Text(relay.name)
+                                Spacer()
+                                if !relay.isComplete {
+                                    Text("da completare").font(.caption).foregroundStyle(.orange)
+                                }
+                            }
                         }
                     }
-                    .disabled(!model.canSave || model.isTesting)
+                    .onDelete(perform: model.deleteRelays)
+                    Button("Aggiungi relè", systemImage: "plus", action: model.addRelay)
+                }
 
-                    if let state = model.testState {
-                        Text(state).font(.footnote)
+                Section("Posto esterno") {
+                    ForEach($model.config.stations) { $station in
+                        NavigationLink(station.name) {
+                            StationEditor(station: $station, relays: model.config.relays)
+                        }
                     }
+                    .onDelete(perform: model.deleteStations)
+                    Button("Aggiungi posto esterno", systemImage: "plus", action: model.addStation)
+                }
+
+                Section("Sessione (dalla cattura)") {
+                    LabeledField("Access token", text: $model.accessToken, secure: true)
+                    LabeledField("Refresh token", text: $model.refreshToken, secure: true)
+                    LabeledField("Scade tra (sec)", text: $model.expiresInSeconds)
                 }
 
                 Section {
                     Button {
                         model.sendToWatch()
                     } label: {
-                        Label("Send to Watch", systemImage: "applewatch")
+                        Label("Invia al Watch", systemImage: "applewatch")
                     }
                     .disabled(!model.canSave)
 
                     if let err = phone.lastSyncError {
-                        Text("Sync error: \(err)")
+                        Text("Errore di sincronizzazione: \(err)")
                             .font(.footnote).foregroundStyle(.red)
                     } else if phone.isWatchReachable {
-                        Text("Watch reachable").font(.footnote).foregroundStyle(.green)
+                        Text("Watch raggiungibile").font(.footnote).foregroundStyle(.green)
                     }
                 } footer: {
-                    Text("Values come from the one-time traffic capture — see docs/traffic-capture-playbook.md. Tokens are stored only in the Keychain and synced encrypted to your watch.")
+                    Text("I valori arrivano dalla cattura una tantum: vedi docs/traffic-capture-playbook.md. I token restano nel Portachiavi e vengono sincronizzati cifrati sul Watch.")
                 }
             }
             .navigationTitle("Welcome Gate")
         }
     }
+}
 
-    private func field(_ title: String, _ value: Binding<String>) -> some View {
-        HStack {
-            Text(title).foregroundStyle(.secondary)
-            TextField(title, text: value)
-                .multilineTextAlignment(.trailing)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+struct RelayEditor: View {
+    @Binding var relay: Relay
+    @ObservedObject var model: PairingViewModel
+
+    var body: some View {
+        Form {
+            Section("Relè") {
+                LabeledField("Nome", text: $relay.name)
+            }
+            Section("Indirizzo (dalla cattura)") {
+                LabeledField("Device ID", text: $relay.deviceID)
+                LabeledField("Channel ID", text: $relay.channelID)
+                LabeledField("Datapoint ID", text: $relay.datapointID)
+                LabeledField("Valore apertura", text: $relay.openValue)
+            }
+            Section {
+                Button {
+                    Task { await model.test(relay) }
+                } label: {
+                    HStack {
+                        Label("Prova: attiva ora", systemImage: "lock.open")
+                        if model.testingRelayID == relay.id { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(!model.canSave || model.testingRelayID != nil)
+
+                if let result = model.testResults[relay.id] {
+                    Text(result).font(.footnote)
+                }
+            }
         }
+        .navigationTitle(relay.name)
+    }
+}
+
+struct StationEditor: View {
+    @Binding var station: OutdoorStation
+    let relays: [Relay]
+
+    var body: some View {
+        Form {
+            Section("Posto esterno") {
+                LabeledField("Nome", text: $station.name)
+                LabeledField("Percorso foto", text: Binding(
+                    get: { station.snapshotPath ?? "" },
+                    set: { station.snapshotPath = $0.isEmpty ? nil : $0 }))
+            }
+            Section("Relè mostrati su questo posto esterno") {
+                ForEach(relays) { relay in
+                    Toggle(relay.name, isOn: Binding(
+                        get: { station.relayIDs.contains(relay.id) },
+                        set: { isOn in
+                            station.relayIDs.removeAll { $0 == relay.id }
+                            if isOn { station.relayIDs.append(relay.id) }
+                        }))
+                }
+            }
+        }
+        .navigationTitle(station.name)
+    }
+}
+
+/// Title on the left, editable value on the right.
+struct LabeledField: View {
+    let title: String
+    @Binding var text: String
+    var secure = false
+
+    init(_ title: String, text: Binding<String>, secure: Bool = false) {
+        self.title = title
+        self._text = text
+        self.secure = secure
     }
 
-    private func secureField(_ title: String, _ value: Binding<String>) -> some View {
+    var body: some View {
         HStack {
             Text(title).foregroundStyle(.secondary)
-            SecureField(title, text: value)
-                .multilineTextAlignment(.trailing)
+            Group {
+                if secure {
+                    SecureField(title, text: $text)
+                } else {
+                    TextField(title, text: $text)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+            }
+            .multilineTextAlignment(.trailing)
         }
     }
 }

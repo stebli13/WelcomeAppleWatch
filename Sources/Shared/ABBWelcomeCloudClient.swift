@@ -1,16 +1,16 @@
 import Foundation
 
-/// `GateClient` that opens the door through the ABB Welcome IP **cloud** API,
-/// by replaying the authenticated request the official Welcome App makes.
+/// `GateClient` that talks to the ABB Welcome IP **cloud** API, by replaying the
+/// authenticated requests the official Welcome App makes.
 ///
 /// Works anywhere the device has internet (ideal for a watch on LTE). Handles
 /// OAuth access-token refresh transparently and retries once on 401.
 ///
-/// The exact request shape is driven by `GateConfiguration` so that, once your
+/// The exact request shapes are driven by `GateConfiguration` so that, once your
 /// capture (docs/traffic-capture-playbook.md) confirms the real endpoints and
 /// IDs, no code changes are needed — only the stored configuration.
 actor ABBWelcomeCloudClient: GateClient {
-    private var configuration: GateConfiguration
+    private let configuration: GateConfiguration
     private var credentials: GateCredentials
     private let session: URLSession
     /// Called whenever credentials change (e.g. after a refresh) so the host
@@ -27,33 +27,49 @@ actor ABBWelcomeCloudClient: GateClient {
         self.onCredentialsUpdated = onCredentialsUpdated
     }
 
-    func openDoor() async throws {
-        guard configuration.isComplete else { throw GateError.notConfigured }
-        try await ensureFreshToken()
+    // MARK: - GateClient
+
+    func activate(_ relay: Relay) async throws {
+        guard configuration.isComplete, relay.isComplete,
+              let url = configuration.activationURL(for: relay) else {
+            throw GateError.notConfigured
+        }
+        let body = try JSONSerialization.data(
+            withJSONObject: ["value": relay.openValue])
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        _ = try await sendAuthorized(request)
+    }
+
+    func snapshot(of station: OutdoorStation) async throws -> Data {
+        guard let url = configuration.snapshotURL(for: station) else {
+            throw GateError.notConfigured
+        }
+        return try await sendAuthorized(URLRequest(url: url))
+    }
+
+    // MARK: - Authorized requests
+
+    /// Sends a request with the current bearer token, refreshing it first if
+    /// expired and once more if the server answers 401.
+    private func sendAuthorized(_ request: URLRequest) async throws -> Data {
+        if credentials.isExpired { try await refreshToken() }
         do {
-            try await sendOpen()
+            return try await send(request)
         } catch GateError.server(status: 401, _) {
             // Token may have been revoked mid-flight; refresh once and retry.
             try await refreshToken()
-            try await sendOpen()
+            return try await send(request)
         }
     }
 
-    // MARK: - Door open
-
-    private func sendOpen() async throws {
-        guard let url = configuration.doorOpenURL() else {
-            throw GateError.notConfigured
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+    private func send(_ unauthorized: URLRequest) async throws -> Data {
+        var request = unauthorized
         request.timeoutInterval = 15
         request.setValue("Bearer \(credentials.accessToken)",
                          forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: ["value": configuration.openValue])
-
         let (data, response) = try await perform(request)
         guard let http = response as? HTTPURLResponse else {
             throw GateError.decoding("No HTTP response")
@@ -62,13 +78,10 @@ actor ABBWelcomeCloudClient: GateClient {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw GateError.server(status: http.statusCode, body: body)
         }
+        return data
     }
 
     // MARK: - Token handling
-
-    private func ensureFreshToken() async throws {
-        if credentials.isExpired { try await refreshToken() }
-    }
 
     private func refreshToken() async throws {
         guard let url = URL(string: configuration.refreshURL) else {

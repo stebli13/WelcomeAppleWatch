@@ -45,10 +45,14 @@ myBUILDINGS account — interoperability, not bypassing anything.
 | Refresh token + refresh call | `REFRESH_URL = ??` | token response + refresh call |
 | API base URL | `API_BASE = ??` | the door-open request host |
 | SmartAP UUID | `SMARTAP_UUID = ??` | "get data model" call, or door-open URL |
-| Device id | `DEVICE_ID = ??` | door-open URL/body |
-| Door-opener channel id | `CHANNEL_ID = ??` | door-open URL/body |
-| Door-opener datapoint id | `DATAPOINT_ID = ??` | door-open body |
-| "pressed/open" value | `OPEN_VALUE = ??` (often `"1"`) | door-open body |
+| Per relay: device id | `DEVICE_ID = ??` | that relay's activation URL/body |
+| Per relay: channel id | `CHANNEL_ID = ??` | that relay's activation URL/body |
+| Per relay: datapoint id | `DATAPOINT_ID = ??` | that relay's activation body |
+| Per relay: "pressed/open" value | `OPEN_VALUE = ??` (often `"1"`) | activation body |
+| Station snapshot path (optional) | `SNAPSHOT_PATH = ??` | image GET when opening the station in the app |
+
+Capture **each relay** you use (e.g. tap *Cancello-citofono*, then
+*Basculante-citofono*) — every relay has its own device/channel/datapoint.
 
 #### Action request (template — confirm with capture)
 

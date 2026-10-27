@@ -6,6 +6,8 @@ import WatchConnectivity
 /// encrypted between the paired devices.
 final class WatchSessionManager: NSObject, ObservableObject, WCSessionDelegate {
     @Published var isPaired: Bool = GateStore.isPaired
+    /// Bumped on every received payload so screens reload the configuration.
+    @Published var revision = 0
 
     static let shared = WatchSessionManager()
 
@@ -21,7 +23,10 @@ final class WatchSessionManager: NSObject, ObservableObject, WCSessionDelegate {
               let payload = try? JSONDecoder()
                   .decode(GatePairingPayload.self, from: data) else { return }
         try? GateStore.save(payload)
-        DispatchQueue.main.async { self.isPaired = GateStore.isPaired }
+        DispatchQueue.main.async {
+            self.isPaired = GateStore.isPaired
+            self.revision += 1
+        }
     }
 
     // Latest-state sync (preferred): survives relaunch, overwrites previous.

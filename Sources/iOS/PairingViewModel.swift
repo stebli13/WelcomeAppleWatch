@@ -1,8 +1,9 @@
 import Foundation
 import SwiftUI
 
-/// Drives the iPhone pairing screen: collect the captured configuration and a
-/// current access/refresh token, test "open" once, persist, and push to watch.
+/// Drives the iPhone setup screens: collect the captured configuration (cloud
+/// endpoint, relays, outdoor stations) and a current access/refresh token, test
+/// each relay, persist, and push everything to the watch.
 ///
 /// This is the v1 bootstrap path: you fill it from your traffic capture
 /// (docs/traffic-capture-playbook.md). Once the exact ABB OAuth endpoints are
@@ -16,17 +17,43 @@ final class PairingViewModel: ObservableObject {
     /// Access-token lifetime in seconds (from the token response `expires_in`).
     @Published var expiresInSeconds: String = "3600"
 
-    @Published var testState: String?
-    @Published var isTesting = false
+    @Published private(set) var testResults: [Relay.ID: String] = [:]
+    @Published private(set) var testingRelayID: Relay.ID?
 
     init() {
         let stored = GateStore.loadConfiguration()
-        self.config = stored.isComplete ? stored : .placeholder
+        config = stored.isComplete ? stored : .placeholder
         if let creds = GateStore.loadCredentials() {
             accessToken = creds.accessToken
             refreshToken = creds.refreshToken
         }
     }
+
+    // MARK: - Editing
+
+    func addRelay() {
+        config.relays.append(Relay(name: "Nuovo relè", deviceID: "",
+                                   channelID: "", datapointID: ""))
+    }
+
+    func deleteRelays(at offsets: IndexSet) {
+        let removed = Set(offsets.map { config.relays[$0].id })
+        config.relays.remove(atOffsets: offsets)
+        for index in config.stations.indices {
+            config.stations[index].relayIDs.removeAll { removed.contains($0) }
+        }
+    }
+
+    func addStation() {
+        config.stations.append(OutdoorStation(name: "Posto esterno",
+                                              snapshotPath: nil, relayIDs: []))
+    }
+
+    func deleteStations(at offsets: IndexSet) {
+        config.stations.remove(atOffsets: offsets)
+    }
+
+    // MARK: - Saving / syncing
 
     private func buildPayload() -> GatePairingPayload? {
         guard config.isComplete, !accessToken.isEmpty else { return nil }
@@ -40,35 +67,32 @@ final class PairingViewModel: ObservableObject {
 
     var canSave: Bool { buildPayload() != nil }
 
-    func save() {
-        guard let payload = buildPayload() else { return }
-        try? GateStore.save(payload)
-    }
-
     func sendToWatch() {
         guard let payload = buildPayload() else { return }
         try? GateStore.save(payload)
         PhoneSessionManager.shared.sendToWatch(payload)
     }
 
-    func testOpen() async {
+    // MARK: - Testing
+
+    func test(_ relay: Relay) async {
         guard let payload = buildPayload() else {
-            testState = "Fill in all fields and a token first."
+            testResults[relay.id] = "Compila tutti i campi e il token prima."
             return
         }
-        isTesting = true
-        testState = nil
+        testingRelayID = relay.id
+        testResults[relay.id] = nil
         let client = ABBWelcomeCloudClient(
             configuration: payload.configuration,
             credentials: payload.credentials)
         do {
-            try await client.openDoor()
-            testState = "✅ Door opened. You're set — tap “Send to Watch”."
+            try await client.activate(relay)
+            testResults[relay.id] = "✅ Comando inviato. Ora tocca “Invia al Watch”."
         } catch {
             let message = (error as? GateError)?.errorDescription
                 ?? error.localizedDescription
-            testState = "❌ \(message)"
+            testResults[relay.id] = "❌ \(message)"
         }
-        isTesting = false
+        testingRelayID = nil
     }
 }
