@@ -1,18 +1,13 @@
 import Foundation
 import Security
 
-/// OAuth tokens for the myBUILDINGS session. Secret — Keychain only, never in
+/// Home Assistant long-lived access token. Secret — Keychain only, never in
 /// the repo, UserDefaults, or logs.
 struct GateCredentials: Codable, Equatable {
-    var accessToken: String
-    var refreshToken: String
-    /// Absolute expiry of `accessToken`.
-    var expiresAt: Date
-
-    var isExpired: Bool { Date() >= expiresAt.addingTimeInterval(-30) }
+    var token: String
 }
 
-/// Everything the watch needs to open the door on its own, sent once from the
+/// Everything the watch needs to operate on its own, sent once from the
 /// iPhone over WatchConnectivity and stored in the watch Keychain.
 struct GatePairingPayload: Codable, Equatable {
     var configuration: GateConfiguration

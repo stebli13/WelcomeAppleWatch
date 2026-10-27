@@ -24,6 +24,12 @@ targets:
     sources:
       - Sources/iOS
       - Sources/Shared
+    info:
+      path: Config/iOS-Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Per controllare Home Assistant sulla rete di casa.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.welcomegate
@@ -40,6 +46,11 @@ targets:
     sources:
       - Sources/Watch
       - Sources/Shared
+    info:
+      path: Config/Watch-Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.welcomegate.watchkitapp
