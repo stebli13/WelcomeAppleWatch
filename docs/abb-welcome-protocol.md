@@ -9,6 +9,35 @@ myBUILDINGS account — interoperability, not bypassing anything.
 
 ---
 
+## Correction (after reading the community integration's source)
+
+The "cloud REST + OAuth bearer + write a datapoint" design below was an
+**assumption**, not something verified on real hardware. The open-source
+`rankjie/ha-abb-welcome` integration (read directly) shows how the consumer
+Welcome App ecosystem actually works on IP-gateway installs:
+
+- **Pairing**: portal username/password → HTTP Digest call to
+  `POST https://api.eu.mybuildings.abb.com/certificate/request` with an RSA
+  CSR → a client certificate. No OAuth client id / bearer token appears.
+  Later portal calls (`/event`: discovery, connect, ACL update) use mutual TLS
+  with that certificate. The ACL update carries an RSA-encrypted **SIP
+  password** and the list of doors (`outdoorstation_*` sections).
+- **Unlock** is a **SIP `MESSAGE`** with body `1` (plain text) to
+  `sip:<station>@<domain>`, after a SIP `REGISTER` with digest auth
+  (`<portal_user>_<gruu>` / the decrypted SIP password), over TCP 5060 or
+  TLS 5061 straight to the **gateway on the LAN**. The code contacts no cloud
+  relay, and its README does not claim remote unlock works.
+- Supported hardware named there: ABB **83342** IP gateway, or an
+  **M2240x / ASI22** Wi-Fi indoor station.
+- **Not yet known**: how the official app unlocks from outside the home (the
+  globe icon on the outdoor station suggests an internet path), and how the
+  **"Relè"** list (e.g. Cancello-citofono, Basculante-citofono) is triggered —
+  the integration covers door unlocks, not those actuators. Only a capture of
+  your own app (or your hardware model) can settle this.
+
+So treat everything below as a hypothesis until confirmed. The watch UI and the
+`GateClient` abstraction are transport-independent and remain valid.
+
 ## Two transports
 
 ### 1. Cloud — "Welcome IP Cloud API" (recommended for the watch)
