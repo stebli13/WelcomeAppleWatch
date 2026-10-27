@@ -12,14 +12,15 @@ final class WatchStore: ObservableObject {
         case failure(String)
     }
 
-    @Published private(set) var configuration = GateStore.loadConfiguration()
+    @Published private(set) var configuration: GateConfiguration
     @Published private(set) var states: [Relay.ID: ActivationState] = [:]
     @Published private(set) var snapshots: [OutdoorStation.ID: Data] = [:]
     @Published private(set) var favoriteIDs: Set<Relay.ID>
 
     private static let favoritesKey = "watch.favoriteRelayIDs"
 
-    init() {
+    init(configuration: GateConfiguration = GateStore.loadConfiguration()) {
+        self.configuration = configuration
         let saved = UserDefaults.standard.stringArray(forKey: Self.favoritesKey) ?? []
         favoriteIDs = Set(saved)
     }
@@ -103,3 +104,19 @@ final class WatchStore: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+/// Sample data for the Xcode canvas previews (Sources/Watch/Previews.swift).
+extension WatchStore {
+    static func preview(
+        states: [String: ActivationState] = [:],
+        favoriteNames: [String] = []) -> WatchStore {
+        let store = WatchStore(configuration: .placeholder)
+        for relay in store.relays {
+            if let state = states[relay.name] { store.states[relay.id] = state }
+            if favoriteNames.contains(relay.name) { store.favoriteIDs.insert(relay.id) }
+        }
+        return store
+    }
+}
+#endif
