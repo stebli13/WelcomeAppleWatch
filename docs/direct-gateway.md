@@ -80,6 +80,14 @@ the plausible variants one at a time and stops when you say the relay clicked:
 $PY tools/abb_probe.py --verbose relay --addr 10
 ```
 
+**Result on this installation: variant 6 works**, i.e. `text/plain` body
+`b:<addr>` to the station inside a call. To fire a relay directly:
+
+```bash
+$PY tools/abb_probe.py relay --addr 20 --variant 6   # Basculante-citofono
+$PY tools/abb_probe.py relay --addr 10 --variant 6   # Cancello-citofono
+```
+
 - Add `--no-call` to send without opening a call to the station first,
   `--target <id>` to send to another SIP id (e.g. an actuator from `show`),
   `--variant N` to repeat only the one that worked.
