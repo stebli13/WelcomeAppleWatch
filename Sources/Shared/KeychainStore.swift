@@ -1,19 +1,6 @@
 import Foundation
 import Security
 
-/// Home Assistant long-lived access token. Secret — Keychain only, never in
-/// the repo, UserDefaults, or logs.
-struct GateCredentials: Codable, Equatable {
-    var token: String
-}
-
-/// Everything the watch needs to operate on its own, sent once from the
-/// iPhone over WatchConnectivity and stored in the watch Keychain.
-struct GatePairingPayload: Codable, Equatable {
-    var configuration: GateConfiguration
-    var credentials: GateCredentials
-}
-
 /// Minimal Codable wrapper over the iOS/watchOS Keychain.
 enum KeychainStore {
     private static let service = "com.example.welcomegate"
@@ -32,7 +19,7 @@ enum KeychainStore {
             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
-            throw GateError.decoding("Keychain write failed (\(status))")
+            throw GateError.remote("Salvataggio nel Portachiavi non riuscito (\(status)).")
         }
     }
 
@@ -60,6 +47,6 @@ enum KeychainStore {
     }
 
     // Convenience keys.
-    static let credentialsKey = "gate.credentials"
     static let configurationKey = "gate.configuration"
+    static let accountKey = "gate.abb.account"
 }

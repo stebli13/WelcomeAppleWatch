@@ -531,6 +531,116 @@ def cmd_raw(args: argparse.Namespace) -> None:
                  via=args.via, client_cert=not args.no_client_cert,
                  cloud_port=args.cloud_port)
 
+# --------------------------------------------------------------------------
+# export (for the iPhone app)
+# --------------------------------------------------------------------------
+#
+# Bundle format (read by Sources/iOS/PairingImport.swift):
+#   outer JSON {format, version, kdf, iterations, salt, nonce, ciphertext}
+#   key = PBKDF2-HMAC-SHA256(passphrase, salt, iterations, 32 bytes)
+#   ciphertext = AES-256-GCM(key, nonce, inner JSON) with the 16-byte tag
+#   appended (as Python's AESGCM returns it).
+#   inner JSON: SIP account, cloud server, client identity as PKCS#12, and the
+#   doors/relays from the access list.
+
+BUNDLE_ITERATIONS = 200_000
+
+
+def _acl_entries(state: dict) -> tuple[list[dict], list[dict]]:
+    config = configparser.ConfigParser(interpolation=None, strict=False)
+    config.read_string(state.get("acl_ini", ""))
+    stations, relays = [], []
+    for sec in config.sections():
+        if sec.startswith("outdoorstation_"):
+            address = config.get(sec, "address", fallback="")
+            station_id = address.split(":", 1)[-1].split("@", 1)[0]
+            if station_id:
+                stations.append({"name": config.get(sec, "name", fallback=sec),
+                                 "station_id": station_id})
+        elif sec.startswith("relay_"):
+            address = config.get(sec, "address", fallback="").strip()
+            if address:
+                relays.append({"name": config.get(sec, "name", fallback=sec),
+                               "address": address})
+    relays.sort(key=lambda r: r["name"])
+    return stations, relays
+
+
+def _pkcs12(state: dict, password: bytes) -> bytes:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    certs = x509.load_pem_x509_certificates(state["cert_pem"].encode())
+    key = serialization.load_pem_private_key(state["key_pem"].encode(), password=None)
+    # Legacy 3DES/SHA-1 PKCS#12: what SecPKCS12Import reliably accepts.
+    encryption = (
+        serialization.PrivateFormat.PKCS12.encryption_builder()
+        .kdf_rounds(50_000)
+        .key_cert_algorithm(pkcs12.PBES.PBESv1SHA1And3KeyTripleDESCBC)
+        .hmac_hash(hashes.SHA1())
+        .build(password)
+    )
+    return pkcs12.serialize_key_and_certificates(
+        b"welcomegate", key, certs[0], certs[1:] or None, encryption)
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    import base64
+    import secrets
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+    state = _paired_state()
+    host, port = cloud_address(state)
+    stations, relays = _acl_entries(state)
+    if not stations:
+        sys.exit("No outdoor station in the access list.")
+
+    print("Choose a passphrase for the file (at least 8 characters). You type it "
+          "again on the iPhone when importing; it is not stored anywhere.")
+    passphrase = getpass.getpass("Passphrase: ")
+    if len(passphrase) < 8 or passphrase != getpass.getpass("Again: "):
+        sys.exit("Passphrases too short or different.")
+
+    p12_password = secrets.token_urlsafe(24)
+    inner = {
+        "sip_domain": state["sip_domain"],
+        "sip_username": state["sip_username"],
+        "sip_password": state["sip_password"],
+        "cloud_host": host,
+        "cloud_port": args.cloud_port,
+        "gateway_ip": state.get("gateway_ip", ""),
+        "client_name": state.get("client_name", ""),
+        "pkcs12": base64.b64encode(
+            _pkcs12(state, p12_password.encode())).decode(),
+        "pkcs12_password": p12_password,
+        "stations": stations,
+        "relays": relays,
+    }
+    salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
+    key = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt,
+                     iterations=BUNDLE_ITERATIONS).derive(passphrase.encode())
+    ciphertext = AESGCM(key).encrypt(nonce, json.dumps(inner).encode(), None)
+    outer = {
+        "format": "welcomegate-bundle", "version": 1,
+        "kdf": "pbkdf2-sha256", "iterations": BUNDLE_ITERATIONS,
+        "salt": base64.b64encode(salt).decode(),
+        "nonce": base64.b64encode(nonce).decode(),
+        "ciphertext": base64.b64encode(ciphertext).decode(),
+    }
+    out = args.out.expanduser()
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(outer, fh)
+    print(f"\nWritten {out} (encrypted). Contents: station(s) "
+          f"{', '.join(s['station_id'] for s in stations)}; relay(s) "
+          f"{', '.join(r['name'] + '=' + r['address'] for r in relays) or 'none'}; "
+          f"server {host}:{args.cloud_port}.")
+    print("AirDrop it to the iPhone (save to Files), import it in Welcome Gate, "
+          "then delete it from the Mac and from Files.")
+
 
 # --------------------------------------------------------------------------
 
@@ -595,6 +705,12 @@ def main() -> None:
     p.add_argument("--content-type", default="text/plain")
     add_session_args(p)
     p.set_defaults(func=cmd_raw)
+
+    p = sub.add_parser("export", help="write the encrypted file for the iPhone app")
+    p.add_argument("--out", type=Path,
+                   default=Path("~/Desktop/WelcomeGate.welcomegate"))
+    p.add_argument("--cloud-port", type=int, default=5061)
+    p.set_defaults(func=cmd_export)
 
     args = parser.parse_args()
     if args.command == "pair" and not args.resume and not (args.ip and args.gateway_uuid):

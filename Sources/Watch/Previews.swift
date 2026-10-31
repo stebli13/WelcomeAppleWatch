@@ -18,15 +18,15 @@ private struct Host<Content: View>: View {
 }
 
 #Preview("Controllo accessi") {
-    Host(store: .preview(favoriteNames: ["Cancello-citofono"])) { AccessControlView() }
+    Host(store: .preview(favoriteNames: ["Cancello"])) { AccessControlView() }
 }
 
 #Preview("Controllo accessi · in corso") {
-    Host(store: .preview(states: ["Cancello-citofono": .working])) { AccessControlView() }
+    Host(store: .preview(states: ["Cancello": .working])) { AccessControlView() }
 }
 
 #Preview("Controllo accessi · aperto") {
-    Host(store: .preview(states: ["Cancello-citofono": .success])) { AccessControlView() }
+    Host(store: .preview(states: ["Cancello": .success])) { AccessControlView() }
 }
 
 #Preview("Dispositivi") {
@@ -34,7 +34,7 @@ private struct Host<Content: View>: View {
 }
 
 #Preview("Home · preferiti") {
-    Host(store: .preview(favoriteNames: ["Cancello-citofono", "Basculante-citofono"])) { HomeView() }
+    Host(store: .preview(favoriteNames: ["Cancello", "Basculante"])) { HomeView() }
 }
 
 #Preview("Home · vuota") {
@@ -48,14 +48,14 @@ private struct Host<Content: View>: View {
 }
 
 #Preview("Relè · aperto") {
-    let store = WatchStore.preview(states: ["Cancello-citofono": .success])
+    let store = WatchStore.preview(states: ["Cancello": .success])
     return NavigationStack { RelayDetailView(relay: store.relays[0]) }
         .environmentObject(store)
 }
 
 #Preview("Relè · errore") {
     let store = WatchStore.preview(states: [
-        "Cancello-citofono": .failure("Token non valido. Creane uno nuovo in Home Assistant.")])
+        "Cancello": .failure("iPhone non raggiungibile. Tienilo vicino e acceso.")])
     return NavigationStack { RelayDetailView(relay: store.relays[0]) }
         .environmentObject(store)
 }

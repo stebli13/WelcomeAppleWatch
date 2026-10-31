@@ -1,72 +1,77 @@
 import Foundation
 
-/// A switchable actuator listed under "Controllo accessi → Relè" (e.g.
-/// "Cancello-citofono", "Basculante-citofono"), backed by one Home Assistant
-/// entity such as `button.cancello_citofono_unlock`.
+/// Something the watch can open: a relay under "Controllo accessi → Relè"
+/// (Cancello, Basculante) or the outdoor station's own door lock (Portoncino).
+///
+/// Each one is a SIP `MESSAGE` to an outdoor station with a short text body,
+/// verified on the real installation (see docs/abb-welcome-protocol.md):
+/// - relay at actuator address N: body `b:N`, no call needed;
+/// - door lock: body `1`, sent inside a call to the station.
 struct Relay: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString
     var name: String
-    var entityID: String
+    /// Outdoor station the MESSAGE goes to, e.g. `100000001`.
+    var stationID: String
+    /// MESSAGE body: `b:10`, `b:20`, `1`…
+    var body: String
+    /// Open a call to the station first (needed for the door lock).
+    var inCall: Bool
 
-    /// Service domain, i.e. the part of the entity id before the dot.
-    var domain: String { String(entityID.split(separator: ".").first ?? "") }
+    var isComplete: Bool { !name.isEmpty && !stationID.isEmpty && !body.isEmpty }
 
-    var isComplete: Bool {
-        !name.isEmpty && !domain.isEmpty && entityID.contains(".")
+    /// A relay of the access list (actuator address from `[relay_*] address`).
+    static func actuator(name: String, address: String, stationID: String) -> Relay {
+        Relay(name: name, stationID: stationID, body: "b:\(address)", inCall: false)
+    }
+
+    /// The station's own door lock.
+    static func door(name: String, stationID: String) -> Relay {
+        Relay(name: name, stationID: stationID, body: "1", inCall: true)
     }
 }
 
-/// An outdoor station ("Posto esterno", e.g. "Outdoor Station 1-citofono").
+/// An outdoor station ("Posto esterno", e.g. "Outdoor Station 1").
 struct OutdoorStation: Codable, Identifiable, Hashable {
     var id: String = UUID().uuidString
     var name: String
-    /// Home Assistant `camera.*` or `image.*` entity used for the picture.
-    /// `nil` = no picture, the placeholder panel is shown.
-    var pictureEntityID: String?
+    var stationID: String
     /// Relays offered on this station's screen.
     var relayIDs: [String]
 }
 
-/// Where Home Assistant lives and what to show. Not secret (the access token
-/// is, and lives separately in the Keychain), but per-installation, so it is
-/// stored with the credentials and synced to the watch.
+/// What the screens show. Not secret, so it is also sent to the watch; the
+/// SIP account and certificate stay on the iPhone (`ABBAccount`).
 struct GateConfiguration: Codable, Equatable {
-    /// e.g. `https://xxxx.ui.nabu.casa` or `http://homeassistant.local:8123`.
-    var baseURL: String
     var relays: [Relay]
     var stations: [OutdoorStation]
 
-    private var trimmedBase: String {
-        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        while base.hasSuffix("/") { base.removeLast() }
-        return base
-    }
-
-    var hasValidBaseURL: Bool {
-        guard let url = URL(string: trimmedBase), let scheme = url.scheme?.lowercased()
-        else { return false }
-        return (scheme == "http" || scheme == "https") && url.host != nil
-    }
-
-    /// True once the address is valid and every relay points to an entity.
-    var isComplete: Bool {
-        hasValidBaseURL && !relays.isEmpty && relays.allSatisfy(\.isComplete)
-    }
+    var isComplete: Bool { !relays.isEmpty && relays.allSatisfy(\.isComplete) }
 
     func relay(id: String) -> Relay? { relays.first { $0.id == id } }
 
-    func url(path: String) -> URL? { URL(string: trimmedBase + path) }
+    /// Before the import: the installation's names, nothing to open yet.
+    static let empty = GateConfiguration(relays: [], stations: [])
 
-    /// Mirrors the installation shown in the iPhone app; entities are chosen
-    /// in the setup screen.
-    static let placeholder: GateConfiguration = {
-        let gate = Relay(name: "Cancello-citofono", entityID: "")
-        let garage = Relay(name: "Basculante-citofono", entityID: "")
-        return GateConfiguration(
-            baseURL: "http://homeassistant.local:8123",
-            relays: [gate, garage],
-            stations: [OutdoorStation(name: "Outdoor Station 1-citofono",
-                                      pictureEntityID: nil,
-                                      relayIDs: [gate.id, garage.id])])
-    }()
+    /// Built from what the gateway's access list contains.
+    static func from(stations: [(name: String, stationID: String)],
+                     relays: [(name: String, address: String)]) -> GateConfiguration {
+        guard let first = stations.first else { return .empty }
+        var items = relays.map {
+            Relay.actuator(name: $0.name, address: $0.address, stationID: first.stationID)
+        }
+        items.append(.door(name: "Portoncino", stationID: first.stationID))
+        let allIDs = items.map(\.id)
+        let outdoor = stations.map {
+            OutdoorStation(name: $0.name, stationID: $0.stationID,
+                           relayIDs: $0.stationID == first.stationID ? allIDs : [])
+        }
+        return GateConfiguration(relays: items, stations: outdoor)
+    }
+
+    #if DEBUG
+    /// Sample installation for the Xcode canvas previews.
+    static let placeholder = GateConfiguration.from(
+        stations: [("Outdoor Station 1", "100000001")],
+        relays: [("Cancello", "10"), ("Basculante", "20")])
+    #endif
 }

@@ -1,5 +1,8 @@
 # Setup: ABB-Welcome → Home Assistant → Apple Watch
 
+> **Superseded.** The apps now talk to the ABB cloud SIP server directly; see
+> `direct-gateway.md`. Kept for reference only.
+
 The watch app does not talk to ABB directly. It asks **Home Assistant** to press
 the entities of the ABB-Welcome integration, and Home Assistant does the pairing
 and the SIP unlock. Everything here is for **your own** installation.

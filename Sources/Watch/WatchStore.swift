@@ -46,10 +46,7 @@ final class WatchStore: ObservableObject {
 
     func activate(_ relay: Relay) async {
         guard state(of: relay) != .working else { return }
-        guard let client = GateStore.makeClient() else {
-            finish(relay, with: .failure(GateError.notConfigured.errorDescription ?? ""))
-            return
-        }
+        let client: GateClient = PhoneRelayClient()
         states[relay.id] = .working
         WKInterfaceDevice.current().play(.click)
         do {
@@ -92,17 +89,10 @@ final class WatchStore: ObservableObject {
 
     // MARK: - Station pictures
 
-    func refreshSnapshots() async {
-        for station in stations { await refreshSnapshot(of: station) }
-    }
-
-    func refreshSnapshot(of station: OutdoorStation) async {
-        guard station.pictureEntityID != nil,
-              let client = GateStore.makeClient() else { return }
-        if let data = try? await client.snapshot(of: station) {
-            snapshots[station.id] = data
-        }
-    }
+    /// No camera picture yet over the direct ABB connection: the station
+    /// screens show their placeholder panel.
+    func refreshSnapshots() async {}
+    func refreshSnapshot(of station: OutdoorStation) async {}
 }
 
 #if DEBUG

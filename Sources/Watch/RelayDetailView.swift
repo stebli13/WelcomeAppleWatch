@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One relay (e.g. "Cancello-citofono"): a big button that fires it.
+/// One relay (e.g. "Cancello"): a big button that fires it.
 struct RelayDetailView: View {
     @EnvironmentObject private var store: WatchStore
     let relay: Relay

@@ -1,80 +1,123 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var model = PairingViewModel()
     @ObservedObject private var phone = PhoneSessionManager.shared
 
+    @State private var showImporter = false
+    @State private var pendingFile: URL?
+    @State private var passphrase = ""
+
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledField("Indirizzo", text: $model.config.baseURL)
-                    LabeledField("Token", text: $model.token, secure: true)
-                    Button {
-                        Task { await model.loadEntities() }
-                    } label: {
-                        HStack {
-                            Label("Collega e carica entità", systemImage: "link")
-                            if model.isLoadingEntities { Spacer(); ProgressView() }
-                        }
-                    }
-                    .disabled(!model.hasConnection || model.isLoadingEntities)
-                    if let status = model.entitiesStatus {
-                        Text(status).font(.footnote)
-                    }
-                } header: {
-                    Text("Home Assistant")
-                } footer: {
-                    Text("Il token si crea in Home Assistant: Profilo → Sicurezza → Token di accesso di lunga durata. Vedi docs/home-assistant-setup.md.")
-                }
+                accountSection
 
-                Section("Relè") {
-                    ForEach($model.config.relays) { $relay in
-                        NavigationLink {
-                            RelayEditor(relay: $relay, model: model)
-                        } label: {
-                            HStack {
-                                Text(relay.name)
-                                Spacer()
-                                if !relay.isComplete {
-                                    Text("da completare").font(.caption).foregroundStyle(.orange)
-                                }
+                if model.isImported {
+                    Section("Relè") {
+                        ForEach($model.config.relays) { $relay in
+                            NavigationLink {
+                                RelayEditor(relay: $relay, model: model)
+                            } label: {
+                                RelayListRow(relay: relay, model: model)
                             }
                         }
+                        .onDelete(perform: model.deleteRelays)
+                        Button("Aggiungi relè", systemImage: "plus", action: model.addRelay)
                     }
-                    .onDelete(perform: model.deleteRelays)
-                    Button("Aggiungi relè", systemImage: "plus", action: model.addRelay)
-                }
 
-                Section("Posto esterno") {
-                    ForEach($model.config.stations) { $station in
-                        NavigationLink(station.name) {
-                            StationEditor(station: $station, model: model)
+                    Section {
+                        Button {
+                            model.sendToWatch()
+                        } label: {
+                            Label("Invia al Watch", systemImage: "applewatch")
                         }
-                    }
-                    .onDelete(perform: model.deleteStations)
-                    Button("Aggiungi posto esterno", systemImage: "plus", action: model.addStation)
-                }
+                        .disabled(!model.canSave)
 
-                Section {
-                    Button {
-                        model.sendToWatch()
-                    } label: {
-                        Label("Invia al Watch", systemImage: "applewatch")
+                        if let err = phone.lastSyncError {
+                            Text("Errore di sincronizzazione: \(err)")
+                                .font(.footnote).foregroundStyle(.red)
+                        } else if phone.isWatchReachable {
+                            Text("Watch raggiungibile").font(.footnote).foregroundStyle(.green)
+                        }
+                    } footer: {
+                        Text("Al Watch vanno solo i nomi. Certificato e password restano nel Portachiavi dell’iPhone: quando tocchi Apri sul Watch, è l’iPhone a mandare il comando al server ABB, da casa o da fuori.")
                     }
-                    .disabled(!model.canSave)
-
-                    if let err = phone.lastSyncError {
-                        Text("Errore di sincronizzazione: \(err)")
-                            .font(.footnote).foregroundStyle(.red)
-                    } else if phone.isWatchReachable {
-                        Text("Watch raggiungibile").font(.footnote).foregroundStyle(.green)
-                    }
-                } footer: {
-                    Text("Il token resta nel Portachiavi e viene sincronizzato cifrato sul Watch.")
                 }
             }
             .navigationTitle("Welcome Gate")
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: [.data, .json]) { result in
+                if case let .success(url) = result {
+                    passphrase = ""
+                    pendingFile = url
+                }
+            }
+            .alert("Passphrase del file",
+                   isPresented: Binding(get: { pendingFile != nil },
+                                        set: { if !$0 { pendingFile = nil } })) {
+                SecureField("Passphrase", text: $passphrase)
+                Button("Importa") {
+                    if let url = pendingFile { model.importFile(at: url, passphrase: passphrase) }
+                    passphrase = ""
+                    pendingFile = nil
+                }
+                Button("Annulla", role: .cancel) {
+                    passphrase = ""
+                    pendingFile = nil
+                }
+            } message: {
+                Text("Quella scelta sul Mac con “abb_probe.py export”.")
+            }
+        }
+    }
+
+    private var accountSection: some View {
+        Section {
+            if let account = model.account {
+                LabeledContent("Server", value: "\(account.cloudHost):\(account.cloudPort)")
+                LabeledContent("Utente SIP", value: account.sipUsername)
+                LabeledContent("Sistema", value: account.sipDomain)
+            }
+            Button {
+                showImporter = true
+            } label: {
+                Label(model.isImported ? "Importa di nuovo" : "Importa file dal Mac",
+                      systemImage: "square.and.arrow.down")
+            }
+            if let status = model.importStatus {
+                Text(status).font(.footnote)
+            }
+            if model.isImported {
+                Button("Dimentica abbinamento", role: .destructive, action: model.forget)
+            }
+        } header: {
+            Text("Abbinamento ABB-Welcome")
+        } footer: {
+            if !model.isImported {
+                Text("Sul Mac: “abb_probe.py export”, poi AirDrop del file su iPhone (Salva in File) e importalo qui. Vedi docs/direct-gateway.md.")
+            }
+        }
+    }
+}
+
+struct RelayListRow: View {
+    let relay: Relay
+    @ObservedObject var model: PairingViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(relay.name)
+                Spacer()
+                if model.testingRelayID == relay.id { ProgressView() }
+            }
+            Text("\(relay.body)\(relay.inCall ? " · in chiamata" : "")")
+                .font(.caption).foregroundStyle(.secondary)
+            if let result = model.testResults[relay.id] {
+                Text(result).font(.caption)
+            }
         }
     }
 }
@@ -88,124 +131,34 @@ struct RelayEditor: View {
             Section("Relè") {
                 LabeledField("Nome", text: $relay.name)
             }
-            Section("Entità Home Assistant") {
-                LabeledField("Entity ID", text: $relay.entityID)
-                NavigationLink("Scegli dall’elenco") {
-                    EntityPicker(
-                        title: "Entità",
-                        entities: model.entities,
-                        domains: ["button", "switch", "lock", "cover", "light",
-                                  "script", "scene", "input_boolean", "automation"],
-                        selection: $relay.entityID)
-                }
-                .disabled(model.entities.isEmpty)
-                if model.entities.isEmpty {
-                    Text("Tocca “Collega e carica entità” nella schermata principale per usare l’elenco.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+            Section {
+                LabeledField("Comando", text: $relay.body)
+                LabeledField("Posto esterno", text: $relay.stationID)
+                Toggle("Apri chiamata prima", isOn: $relay.inCall)
+            } header: {
+                Text("Comando SIP")
+            } footer: {
+                Text("Relè all’indirizzo N: “b:N”, senza chiamata. Portoncino: “1”, in chiamata.")
             }
             Section {
                 Button {
                     Task { await model.test(relay) }
                 } label: {
                     HStack {
-                        Label("Prova: attiva ora", systemImage: "lock.open")
+                        Label("Prova: apri ora", systemImage: "lock.open")
                         if model.testingRelayID == relay.id { Spacer(); ProgressView() }
                     }
                 }
-                .disabled(!model.hasConnection || !relay.isComplete || model.testingRelayID != nil)
+                .disabled(!relay.isComplete || model.testingRelayID != nil)
 
                 if let result = model.testResults[relay.id] {
                     Text(result).font(.footnote)
                 }
+            } footer: {
+                Text("Apre davvero: provalo solo quando è sicuro.")
             }
         }
         .navigationTitle(relay.name)
-    }
-}
-
-struct StationEditor: View {
-    @Binding var station: OutdoorStation
-    @ObservedObject var model: PairingViewModel
-
-    var body: some View {
-        Form {
-            Section("Posto esterno") {
-                LabeledField("Nome", text: $station.name)
-            }
-            Section("Foto (opzionale)") {
-                LabeledField("Entity ID", text: Binding(
-                    get: { station.pictureEntityID ?? "" },
-                    set: { station.pictureEntityID = $0.isEmpty ? nil : $0 }))
-                NavigationLink("Scegli dall’elenco") {
-                    EntityPicker(
-                        title: "Telecamera",
-                        entities: model.entities,
-                        domains: ["camera", "image"],
-                        selection: Binding(
-                            get: { station.pictureEntityID ?? "" },
-                            set: { station.pictureEntityID = $0.isEmpty ? nil : $0 }))
-                }
-                .disabled(model.entities.isEmpty)
-            }
-            Section("Relè mostrati su questo posto esterno") {
-                ForEach(model.config.relays) { relay in
-                    Toggle(relay.name, isOn: Binding(
-                        get: { station.relayIDs.contains(relay.id) },
-                        set: { isOn in
-                            station.relayIDs.removeAll { $0 == relay.id }
-                            if isOn { station.relayIDs.append(relay.id) }
-                        }))
-                }
-            }
-        }
-        .navigationTitle(station.name)
-    }
-}
-
-/// Searchable list of Home Assistant entities, limited to the given domains.
-struct EntityPicker: View {
-    let title: String
-    let entities: [HAEntity]
-    let domains: [String]
-    @Binding var selection: String
-    @State private var query = ""
-    @Environment(\.dismiss) private var dismiss
-
-    private var visible: [HAEntity] {
-        entities.filter { entity in
-            guard let domain = entity.entityID.split(separator: ".").first,
-                  domains.contains(String(domain)) else { return false }
-            return query.isEmpty
-                || entity.name.localizedCaseInsensitiveContains(query)
-                || entity.entityID.localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    var body: some View {
-        List(visible) { entity in
-            Button {
-                selection = entity.entityID
-                dismiss()
-            } label: {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(entity.name)
-                        Text(entity.entityID).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if entity.entityID == selection {
-                        Image(systemName: "checkmark").foregroundStyle(.blue)
-                    }
-                }
-            }
-            .foregroundStyle(.primary)
-        }
-        .searchable(text: $query, prompt: "Cerca (es. cancello)")
-        .navigationTitle(title)
-        .overlay {
-            if visible.isEmpty { ContentUnavailableView.search }
-        }
     }
 }
 
@@ -213,27 +166,19 @@ struct EntityPicker: View {
 struct LabeledField: View {
     let title: String
     @Binding var text: String
-    var secure = false
 
-    init(_ title: String, text: Binding<String>, secure: Bool = false) {
+    init(_ title: String, text: Binding<String>) {
         self.title = title
         self._text = text
-        self.secure = secure
     }
 
     var body: some View {
         HStack {
             Text(title).foregroundStyle(.secondary)
-            Group {
-                if secure {
-                    SecureField(title, text: $text)
-                } else {
-                    TextField(title, text: $text)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-            }
-            .multilineTextAlignment(.trailing)
+            TextField(title, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(.trailing)
         }
     }
 }

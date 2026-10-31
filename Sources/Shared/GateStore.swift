@@ -1,39 +1,21 @@
 import Foundation
 
-/// Reads/writes the paired state from the Keychain and constructs a configured
-/// `GateClient`. Shared by the iPhone and watch targets.
+/// The screen configuration (relays, stations), stored in the Keychain on
+/// both devices. Secrets are handled separately, on the iPhone only
+/// (`ABBAccountStore`).
 enum GateStore {
     static func loadConfiguration() -> GateConfiguration {
-        KeychainStore.load(GateConfiguration.self,
-                           key: KeychainStore.configurationKey)
-            ?? .placeholder
+        KeychainStore.load(GateConfiguration.self, key: KeychainStore.configurationKey)
+            ?? .empty
     }
 
-    static func loadCredentials() -> GateCredentials? {
-        KeychainStore.load(GateCredentials.self,
-                           key: KeychainStore.credentialsKey)
+    static func saveConfiguration(_ configuration: GateConfiguration) throws {
+        try KeychainStore.save(configuration, key: KeychainStore.configurationKey)
     }
 
-    static var isPaired: Bool {
-        loadConfiguration().isComplete && loadCredentials() != nil
-    }
-
-    static func save(_ payload: GatePairingPayload) throws {
-        try KeychainStore.save(payload.configuration,
-                               key: KeychainStore.configurationKey)
-        try KeychainStore.save(payload.credentials,
-                               key: KeychainStore.credentialsKey)
-    }
+    static var isConfigured: Bool { loadConfiguration().isComplete }
 
     static func clear() {
         KeychainStore.delete(key: KeychainStore.configurationKey)
-        KeychainStore.delete(key: KeychainStore.credentialsKey)
-    }
-
-    /// Builds a client from stored state, or nil if not paired.
-    static func makeClient() -> GateClient? {
-        guard isPaired, let credentials = loadCredentials() else { return nil }
-        return HomeAssistantClient(configuration: loadConfiguration(),
-                                   token: credentials.token)
     }
 }

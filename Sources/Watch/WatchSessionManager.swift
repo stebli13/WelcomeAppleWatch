@@ -1,12 +1,11 @@
 import Foundation
 import WatchConnectivity
 
-/// Receives the pairing payload (configuration + credentials) pushed from the
-/// iPhone and stores it in the watch Keychain. WatchConnectivity transfers are
-/// encrypted between the paired devices.
+/// Watch side of WatchConnectivity: receives the screen configuration from
+/// the iPhone, and carries "open" requests to it (`PhoneRelayClient`).
 final class WatchSessionManager: NSObject, ObservableObject, WCSessionDelegate {
-    @Published var isPaired: Bool = GateStore.isPaired
-    /// Bumped on every received payload so screens reload the configuration.
+    @Published var isPaired: Bool = GateStore.isConfigured
+    /// Bumped on every received configuration so screens reload it.
     @Published var revision = 0
 
     static let shared = WatchSessionManager()
@@ -19,23 +18,21 @@ final class WatchSessionManager: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     private func store(_ dict: [String: Any]) {
-        guard let data = dict["payload"] as? Data,
-              let payload = try? JSONDecoder()
-                  .decode(GatePairingPayload.self, from: data) else { return }
-        try? GateStore.save(payload)
+        guard let data = dict["configuration"] as? Data,
+              let configuration = try? JSONDecoder()
+                  .decode(GateConfiguration.self, from: data) else { return }
+        try? GateStore.saveConfiguration(configuration)
         DispatchQueue.main.async {
-            self.isPaired = GateStore.isPaired
+            self.isPaired = GateStore.isConfigured
             self.revision += 1
         }
     }
 
-    // Latest-state sync (preferred): survives relaunch, overwrites previous.
     func session(_ session: WCSession,
                  didReceiveApplicationContext ctx: [String: Any]) {
         store(ctx)
     }
 
-    // Queued one-shot delivery (fallback / explicit "send to watch").
     func session(_ session: WCSession,
                  didReceiveUserInfo userInfo: [String: Any]) {
         store(userInfo)
@@ -44,8 +41,32 @@ final class WatchSessionManager: NSObject, ObservableObject, WCSessionDelegate {
     func session(_ session: WCSession,
                  activationDidCompleteWith state: WCSessionActivationState,
                  error: Error?) {
-        // Pick up any context delivered before activation.
         let ctx = session.receivedApplicationContext
         if !ctx.isEmpty { store(ctx) }
+    }
+}
+
+/// `GateClient` for the watch: asks the iPhone to open, because watchOS does
+/// not allow the TLS sockets SIP needs (Apple TN3135). Works wherever the
+/// iPhone is connected to the watch and has internet.
+struct PhoneRelayClient: GateClient {
+    func activate(_ relay: Relay) async throws {
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else {
+            throw GateError.phoneUnreachable
+        }
+        let reply: [String: Any] = try await withCheckedThrowingContinuation { cont in
+            session.sendMessage(["activate": relay.id], replyHandler: { reply in
+                cont.resume(returning: reply)
+            }, errorHandler: { _ in
+                cont.resume(throwing: GateError.phoneUnreachable)
+            })
+        }
+        if let message = reply["error"] as? String {
+            throw GateError.remote(message)
+        }
+        guard reply["ok"] as? Bool == true else {
+            throw GateError.remote("Risposta inattesa dall’iPhone.")
+        }
     }
 }

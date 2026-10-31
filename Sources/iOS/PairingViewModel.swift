@@ -1,30 +1,62 @@
 import Foundation
 import SwiftUI
 
-/// Drives the iPhone setup screens: Home Assistant address and token, which
-/// entity each relay fires and which picture each station uses; test each
-/// relay, persist, and push everything to the watch.
+/// Drives the iPhone screens: import the file exported on the Mac, edit and
+/// test the relays, push the configuration to the watch.
 @MainActor
 final class PairingViewModel: ObservableObject {
-    @Published var config: GateConfiguration
-    @Published var token: String = ""
+    /// Saved on every edit: the watch's requests are served from the
+    /// stored configuration.
+    @Published var config: GateConfiguration {
+        didSet { if isImported { try? GateStore.saveConfiguration(config) } }
+    }
+    @Published private(set) var account: ABBAccount?
 
-    @Published private(set) var entities: [HAEntity] = []
-    @Published private(set) var entitiesStatus: String?
-    @Published private(set) var isLoadingEntities = false
-
+    @Published var importStatus: String?
     @Published private(set) var testResults: [Relay.ID: String] = [:]
     @Published private(set) var testingRelayID: Relay.ID?
 
     init() {
         config = GateStore.loadConfiguration()
-        token = GateStore.loadCredentials()?.token ?? ""
+        account = ABBAccountStore.load()
+    }
+
+    var isImported: Bool { account != nil }
+
+    // MARK: - Import
+
+    func importFile(at url: URL, passphrase: String) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let result = try PairingImport.read(data, passphrase: passphrase)
+            try ABBAccountStore.save(result.account)
+            account = result.account
+            config = result.configuration
+            importStatus = "✅ Importato: \(config.relays.map(\.name).joined(separator: ", ")). "
+                + "Ora puoi cancellare il file da File e dal Mac."
+        } catch {
+            importStatus = "❌ \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
+    }
+
+    func forget() {
+        ABBAccountStore.clear()
+        GateStore.clear()
+        account = nil
+        config = .empty
+        importStatus = nil
+        testResults = [:]
     }
 
     // MARK: - Editing
 
     func addRelay() {
-        config.relays.append(Relay(name: "Nuovo relè", entityID: ""))
+        let station = config.stations.first?.stationID ?? ""
+        let relay = Relay(name: "Nuovo relè", stationID: station, body: "b:", inCall: false)
+        config.relays.append(relay)
+        if !config.stations.isEmpty { config.stations[0].relayIDs.append(relay.id) }
     }
 
     func deleteRelays(at offsets: IndexSet) {
@@ -35,69 +67,32 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
-    func addStation() {
-        config.stations.append(OutdoorStation(name: "Posto esterno",
-                                              pictureEntityID: nil, relayIDs: []))
-    }
-
-    func deleteStations(at offsets: IndexSet) {
-        config.stations.remove(atOffsets: offsets)
-    }
-
-    // MARK: - Connection
-
-    var hasConnection: Bool { config.hasValidBaseURL && !token.isEmpty }
-
-    private var client: HomeAssistantClient {
-        HomeAssistantClient(configuration: config, token: token)
-    }
-
-    func loadEntities() async {
-        guard hasConnection else {
-            entitiesStatus = "Inserisci indirizzo e token di Home Assistant."
-            return
-        }
-        isLoadingEntities = true
-        entitiesStatus = nil
-        do {
-            entities = try await client.entities()
-            entitiesStatus = "✅ Connesso: \(entities.count) entità trovate."
-        } catch {
-            entitiesStatus = "❌ \((error as? GateError)?.errorDescription ?? error.localizedDescription)"
-        }
-        isLoadingEntities = false
-    }
-
     // MARK: - Saving / syncing
 
-    private func buildPayload() -> GatePairingPayload? {
-        guard config.isComplete, !token.isEmpty else { return nil }
-        return GatePairingPayload(configuration: config,
-                                  credentials: GateCredentials(token: token))
-    }
-
-    var canSave: Bool { buildPayload() != nil }
+    var canSave: Bool { isImported && config.isComplete }
 
     func sendToWatch() {
-        guard let payload = buildPayload() else { return }
-        try? GateStore.save(payload)
-        PhoneSessionManager.shared.sendToWatch(payload)
+        guard canSave else { return }
+        try? GateStore.saveConfiguration(config)
+        PhoneSessionManager.shared.sendToWatch(config)
     }
 
     // MARK: - Testing
 
     func test(_ relay: Relay) async {
-        guard hasConnection, relay.isComplete else {
-            testResults[relay.id] = "Scegli prima l’entità e inserisci indirizzo e token."
+        guard let account, relay.isComplete else {
+            testResults[relay.id] = "Importa prima il file dal Mac."
             return
         }
         testingRelayID = relay.id
         testResults[relay.id] = nil
+        let started = Date()
         do {
-            try await client.activate(relay)
-            testResults[relay.id] = "✅ Comando inviato."
+            try await ABBCloudClient(account: account).activate(relay)
+            let seconds = Date().timeIntervalSince(started)
+            testResults[relay.id] = String(format: "✅ Comando accettato (%.1f s).", seconds)
         } catch {
-            testResults[relay.id] = "❌ \((error as? GateError)?.errorDescription ?? error.localizedDescription)"
+            testResults[relay.id] = "❌ \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
         }
         testingRelayID = nil
     }

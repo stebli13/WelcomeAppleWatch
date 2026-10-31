@@ -116,11 +116,37 @@ refuses connections) the server accepts the pairing certificate and SIP
 credentials, and `b:10` opened the gate. So remote opening needs nothing
 running at home.
 
-## Step 2 — after the probe
+## Step 2 — the apps
 
-Depending on the answers: a Swift SIP client in the iPhone app (Network
-framework, digest auth), an import of the pairing result from the Mac into the
-iPhone Keychain (so pairing does not need to be rewritten in Swift), and the
-watch sending "open" requests to the iPhone. If the relays turn out not to be
-reachable this way, a capture of the official app's SIP traffic would be needed
-next — which TLS makes much harder than an HTTPS capture.
+Verified with the probe: everything opens through the ABB cloud SIP server
+(`sip.my.busch-jaeger.de:5061`), so the iPhone app does the same, from home or
+away, and the watch asks the iPhone (watchOS forbids the sockets).
+
+```
+Apple Watch ──WatchConnectivity──▶ iPhone ──SIP/TLS 5061──▶ sip.my.busch-jaeger.de ──▶ gateway ──▶ gate
+```
+
+| Opens | SIP MESSAGE to station 100000001 |
+|---|---|
+| Cancello (relay 10) | `b:10`, no call |
+| Basculante (relay 20) | `b:20`, no call |
+| Portoncino (door lock) | `1`, inside a call |
+
+1. On the Mac, write the encrypted file for the iPhone (asks for a passphrase):
+   ```bash
+   $PY tools/abb_probe.py export
+   ```
+   It lands on the Desktop as `WelcomeGate.welcomegate`.
+2. AirDrop it to the iPhone and choose **Salva in File**.
+3. Build and install the apps (README), open Welcome Gate on the iPhone,
+   **Importa file dal Mac**, pick the file, type the passphrase.
+4. Tap each relay → **Prova: apri ora** to check from the iPhone.
+5. **Invia al Watch**. On the watch, open from Controllo accessi or Preferiti.
+6. Delete the file from Files and from the Mac's Desktop.
+
+The SIP password, certificate and key stay in the iPhone Keychain; the watch
+only receives names and commands. If the iPhone is lost: remove the
+`welcomegate-…` client from the Welcome App's pairing list.
+
+Not compiled yet (no Xcode in the container that wrote it): the first build
+may need small fixes.
