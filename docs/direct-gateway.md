@@ -107,6 +107,8 @@ the gateway's LAN address, presenting the pairing certificate for TLS
 
 ```bash
 $PY tools/abb_probe.py --verbose raw --via cloud --no-call --body b:10
+# global-address says 8889, but only 5061 answers from outside:
+$PY tools/abb_probe.py --verbose raw --via cloud --cloud-port 5061 --no-call --body b:10
 ```
 
 Not yet verified against the real server: whether it accepts this client's

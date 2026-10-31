@@ -385,7 +385,7 @@ def cloud_address(state: dict) -> tuple[str, int]:
 
 
 def open_socket(sip, state: dict, via: str, transport: str, timeout: float,
-                client_cert: bool):
+                client_cert: bool, cloud_port: int | None = None):
     """Connect to the gateway on the LAN, or to the ABB cloud SIP server."""
     import ssl
     import tempfile
@@ -397,6 +397,7 @@ def open_socket(sip, state: dict, via: str, transport: str, timeout: float,
         return gw, sock, local_ip, local_port
 
     host, port = cloud_address(state)
+    port = cloud_port or port
     gw = sip.GatewayConfig(sip_domain=domain, gw_host=host, gw_port=port,
                            transport="tls")
     print(f"Connecting to the ABB cloud SIP server {host}:{port} "
@@ -427,12 +428,13 @@ def open_socket(sip, state: dict, via: str, transport: str, timeout: float,
 def run_messages(sip, state: dict, *, station: str, target: str | None,
                  call: bool, transport: str, timeout: float,
                  messages: list[tuple[str, str, str]], pause: float,
-                 via: str = "lan", client_cert: bool = True) -> None:
+                 via: str = "lan", client_cert: bool = True,
+                 cloud_port: int | None = None) -> None:
     """Register, optionally open a call to `station`, send each MESSAGE."""
     domain = state["sip_domain"]
     user, password = state["sip_username"], state["sip_password"]
     gw, sock, local_ip, local_port = open_socket(sip, state, via, transport,
-                                                 timeout, client_cert)
+                                                 timeout, client_cert, cloud_port)
     stream = sip.SipStream(sock)
     session = None
     try:
@@ -514,7 +516,8 @@ def cmd_relay(args: argparse.Namespace) -> None:
     run_messages(sip, state, station=args.station, target=args.target,
                  call=not args.no_call, transport=args.transport,
                  timeout=args.timeout, messages=variants, pause=args.pause,
-                 via=args.via, client_cert=not args.no_client_cert)
+                 via=args.via, client_cert=not args.no_client_cert,
+                 cloud_port=args.cloud_port)
 
 
 def cmd_raw(args: argparse.Namespace) -> None:
@@ -525,7 +528,8 @@ def cmd_raw(args: argparse.Namespace) -> None:
                  call=not args.no_call, transport=args.transport,
                  timeout=args.timeout,
                  messages=[("raw", args.content_type, args.body)], pause=0,
-                 via=args.via, client_cert=not args.no_client_cert)
+                 via=args.via, client_cert=not args.no_client_cert,
+                 cloud_port=args.cloud_port)
 
 
 # --------------------------------------------------------------------------
@@ -573,6 +577,8 @@ def main() -> None:
         p.add_argument("--via", choices=("lan", "cloud"), default="lan",
                        help="lan = gateway at home; cloud = ABB SIP server "
                        "(global-address), works away from home")
+        p.add_argument("--cloud-port", type=int,
+                       help="cloud: port to use instead of global-address's (e.g. 5061)")
         p.add_argument("--no-client-cert", action="store_true",
                        help="cloud: do not present the pairing certificate")
 
