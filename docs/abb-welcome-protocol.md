@@ -30,9 +30,11 @@ account — interoperability, as the open-source Home Assistant integrations do.
 
 ## Open questions
 
-1. **Remote unlock**: the access list's `[network] global-address` is
-   `sip:sip.my.busch-jaeger.de:8889;transport=tls`, the likely remote route
-   (probe: `--via cloud`, to verify). The community code is LAN-only. The route the app uses is unknown (the globe icon
+1. **Remote unlock — solved for relays**: REGISTER + MESSAGE over TLS to
+   `sip.my.busch-jaeger.de:5061` (host from `[network] global-address`; its
+   port 8889 refuses), with the pairing client certificate and the same SIP
+   credentials and domain. `b:10` opened the gate this way. Door body `1`
+   via the cloud: still to test. The route the app uses is unknown (the globe icon
    on the outdoor station hints at an internet path).
 2. **Relè**: solved, see above (`b:<addr>`, no call needed).
 3. **Your hardware model** — decides which integration variant applies.

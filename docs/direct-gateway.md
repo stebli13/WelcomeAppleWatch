@@ -111,8 +111,10 @@ $PY tools/abb_probe.py --verbose raw --via cloud --no-call --body b:10
 $PY tools/abb_probe.py --verbose raw --via cloud --cloud-port 5061 --no-call --body b:10
 ```
 
-Not yet verified against the real server: whether it accepts this client's
-REGISTER and forwards the MESSAGE to the gateway.
+**Verified:** on port **5061** (not the 8889 in `global-address`, which
+refuses connections) the server accepts the pairing certificate and SIP
+credentials, and `b:10` opened the gate. So remote opening needs nothing
+running at home.
 
 ## Step 2 — after the probe
 
