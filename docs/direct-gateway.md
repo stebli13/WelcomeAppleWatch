@@ -97,6 +97,21 @@ $PY tools/abb_probe.py relay --addr 10 --variant 6 --no-call   # Cancello-citofo
 - Each MESSAGE's SIP answer is printed (`200 OK`, `400`, `488`…): note it,
   it tells which shapes the gateway understands even if nothing clicks.
 
+### Away from home: the ABB cloud SIP server
+
+The access list has `global-address = <sip:sip.my.busch-jaeger.de:8889;transport=tls>`:
+the ABB/Busch-Jaeger SIP server the official app uses outside the home
+network. `--via cloud` sends the same REGISTER + MESSAGE there instead of to
+the gateway's LAN address, presenting the pairing certificate for TLS
+(`--no-client-cert` to try without it):
+
+```bash
+$PY tools/abb_probe.py --verbose raw --via cloud --no-call --body b:10
+```
+
+Not yet verified against the real server: whether it accepts this client's
+REGISTER and forwards the MESSAGE to the gateway.
+
 ## Step 2 — after the probe
 
 Depending on the answers: a Swift SIP client in the iPhone app (Network

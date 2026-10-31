@@ -372,18 +372,72 @@ def send_message(sip, stream, local_ip, local_port, gw, user, password,
     return response
 
 
+def cloud_address(state: dict) -> tuple[str, int]:
+    """Host and port of the ABB/Busch-Jaeger SIP server ('global-address' in
+    the access list), which the official app uses away from home."""
+    import re
+
+    match = re.search(r"global-address\s*=\s*<?sip:([^:;>\s]+):(\d+)",
+                      state.get("acl_ini", ""))
+    if not match:
+        sys.exit("No global-address in the saved access list (see 'show').")
+    return match.group(1), int(match.group(2))
+
+
+def open_socket(sip, state: dict, via: str, transport: str, timeout: float,
+                client_cert: bool):
+    """Connect to the gateway on the LAN, or to the ABB cloud SIP server."""
+    import ssl
+    import tempfile
+
+    domain = state["sip_domain"]
+    if via == "lan":
+        gw = sip._build_gateway_config(domain, state["gateway_ip"], transport)
+        sock, local_ip, local_port = sip._build_socket(gw, timeout)
+        return gw, sock, local_ip, local_port
+
+    host, port = cloud_address(state)
+    gw = sip.GatewayConfig(sip_domain=domain, gw_host=host, gw_port=port,
+                           transport="tls")
+    print(f"Connecting to the ABB cloud SIP server {host}:{port} "
+          f"(client certificate: {'yes' if client_cert else 'no'})")
+    context = sip._build_ssl_context()
+    if client_cert:
+        # load_cert_chain needs files: write them only for the handshake,
+        # readable by this user only, then delete them.
+        STATE_DIR.mkdir(mode=0o700, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=STATE_DIR, suffix=".pem",
+                                         delete=False) as fh:
+            os.chmod(fh.name, 0o600)
+            fh.write(state["cert_pem"].strip() + "\n" + state["key_pem"].strip() + "\n")
+            pem = fh.name
+        try:
+            context.load_cert_chain(pem)
+        finally:
+            os.unlink(pem)
+    raw = socket.create_connection((host, port), timeout=timeout)
+    sock = context.wrap_socket(raw, server_hostname=host)
+    sock.settimeout(timeout)
+    name, version, _ = sock.cipher()
+    print(f"TLS OK ({sock.version()}, {name})")
+    local_ip, local_port = sock.getsockname()[:2]
+    return gw, sock, local_ip, local_port
+
+
 def run_messages(sip, state: dict, *, station: str, target: str | None,
                  call: bool, transport: str, timeout: float,
-                 messages: list[tuple[str, str, str]], pause: float) -> None:
+                 messages: list[tuple[str, str, str]], pause: float,
+                 via: str = "lan", client_cert: bool = True) -> None:
     """Register, optionally open a call to `station`, send each MESSAGE."""
     domain = state["sip_domain"]
     user, password = state["sip_username"], state["sip_password"]
-    gw = sip._build_gateway_config(domain, state["gateway_ip"], transport)
-    sock, local_ip, local_port = sip._build_socket(gw, timeout)
+    gw, sock, local_ip, local_port = open_socket(sip, state, via, transport,
+                                                 timeout, client_cert)
     stream = sip.SipStream(sock)
     session = None
     try:
         sip._register_client(stream, local_ip, local_port, gw, user, password)
+        print(f"REGISTER OK via {via}")
         if target:
             target_uri = target if target.startswith("sip:") else f"sip:{target}@{domain}"
         else:
@@ -459,7 +513,8 @@ def cmd_relay(args: argparse.Namespace) -> None:
     _confirm(f"the relay at address {args.addr}")
     run_messages(sip, state, station=args.station, target=args.target,
                  call=not args.no_call, transport=args.transport,
-                 timeout=args.timeout, messages=variants, pause=args.pause)
+                 timeout=args.timeout, messages=variants, pause=args.pause,
+                 via=args.via, client_cert=not args.no_client_cert)
 
 
 def cmd_raw(args: argparse.Namespace) -> None:
@@ -469,7 +524,8 @@ def cmd_raw(args: argparse.Namespace) -> None:
     run_messages(sip, state, station=args.station, target=args.target,
                  call=not args.no_call, transport=args.transport,
                  timeout=args.timeout,
-                 messages=[("raw", args.content_type, args.body)], pause=0)
+                 messages=[("raw", args.content_type, args.body)], pause=0,
+                 via=args.via, client_cert=not args.no_client_cert)
 
 
 # --------------------------------------------------------------------------
@@ -514,6 +570,11 @@ def main() -> None:
                        help="send without opening a call to the station first")
         p.add_argument("--transport", choices=("tls", "tcp"), default="tls")
         p.add_argument("--timeout", type=float, default=5.0)
+        p.add_argument("--via", choices=("lan", "cloud"), default="lan",
+                       help="lan = gateway at home; cloud = ABB SIP server "
+                       "(global-address), works away from home")
+        p.add_argument("--no-client-cert", action="store_true",
+                       help="cloud: do not present the pairing certificate")
 
     p = sub.add_parser("relay", help="try actuator commands for one relay address")
     p.add_argument("--addr", required=True, help="relay/actuator address, e.g. 10 or 20")
