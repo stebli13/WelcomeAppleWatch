@@ -67,6 +67,27 @@ $PY tools/abb_probe.py unlock --station <station id from show>
 **Undo:** delete `~/.welcomegate/state.json` and remove the `welcomegate-…`
 client from the Welcome App's pairing list.
 
+### Relays (Cancello / Basculante)
+
+`unlock --body 1` opens the door lock of the outdoor station. The relays are
+switch actuators with their own address (10 and 20 on this installation), and
+body `10`/`20` sent to the station is not an actuator command. The outbound
+actuator command is not published; the community code only documents the
+*inbound* shape `{"cmd":"actuator", … "params":{"addr":"…"}}`. `relay` tries
+the plausible variants one at a time and stops when you say the relay clicked:
+
+```bash
+$PY tools/abb_probe.py --verbose relay --addr 10
+```
+
+- Add `--no-call` to send without opening a call to the station first,
+  `--target <id>` to send to another SIP id (e.g. an actuator from `show`),
+  `--variant N` to repeat only the one that worked.
+- `raw --body '<anything>' --content-type application/json` sends one custom
+  MESSAGE for further experiments.
+- Each MESSAGE's SIP answer is printed (`200 OK`, `400`, `488`…): note it,
+  it tells which shapes the gateway understands even if nothing clicks.
+
 ## Step 2 — after the probe
 
 Depending on the answers: a Swift SIP client in the iPhone app (Network

@@ -310,6 +310,169 @@ def cmd_unlock(args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------
+# relay / raw
+# --------------------------------------------------------------------------
+#
+# The relays ("Relè": Cancello-citofono, Basculante-citofono) are switch
+# actuators with an address (1–199) on the bus, not outdoor stations. Body
+# "10"/"20" sent to the station reaches it but is not a valid actuator
+# command. The community code documents only the *inbound* actuator message
+# shape (from the indoor panel's programmable buttons):
+#     {"cmd": "actuator", "buttons": [{"id": 2, "func": 5, "params": {"addr": "199"}}]}
+# so the outbound command is not published anywhere. These variants are the
+# plausible shapes derived from it; `relay` tries them one by one and prints
+# the gateway's answer so you can see which one clicks the relay.
+
+def relay_variants(addr: str) -> list[tuple[str, str, str]]:
+    """(label, content type, body) candidates for switching actuator `addr`."""
+    params = json.dumps({"cmd": "actuator", "params": {"addr": addr}}, separators=(",", ":"))
+    flat = json.dumps({"cmd": "actuator", "addr": addr}, separators=(",", ":"))
+    flat_int = json.dumps({"cmd": "actuator", "addr": int(addr)}, separators=(",", ":"))
+    button = json.dumps(
+        {"cmd": "actuator", "button": 1, "func": 5, "params": {"addr": addr}},
+        separators=(",", ":"),
+    )
+    return [
+        ("json params.addr", "application/json", params),
+        ("json params.addr (text/plain)", "text/plain", params),
+        ("json addr", "application/json", flat),
+        ("json addr (number)", "application/json", flat_int),
+        ("json button+func+params.addr", "application/json", button),
+        ("text b:<addr>", "text/plain", f"b:{addr}"),
+    ]
+
+
+def send_message(sip, stream, local_ip, local_port, gw, user, password,
+                 target_uri: str, body: str, content_type: str):
+    """Like the community `_send_plain_message`, with a chosen Content-Type."""
+    import uuid
+
+    transport = gw.transport.upper()
+    transport_param = f";transport={gw.transport}" if gw.transport == "tls" else ""
+    call_id = f"{uuid.uuid4().hex[:16]}@{gw.sip_domain}"
+    headers = [
+        f"Via: SIP/2.0/{transport} {local_ip}:{local_port};"
+        f"branch=z9hG4bK-{uuid.uuid4().hex[:12]};rport",
+        "Max-Forwards: 70",
+        f"From: <sip:{user}@{gw.sip_domain}{transport_param}>;tag={uuid.uuid4().hex[:8]}",
+        f"To: <{target_uri}>",
+        f"Call-ID: {call_id}",
+        "CSeq: 1 MESSAGE",
+        f"Content-Type: {content_type}",
+        "User-Agent: ABB-Welcome-HA/1.0",
+    ]
+    stream.sock.sendall(sip._sip_request("MESSAGE", target_uri, headers, body))
+    response = stream.recv_final_response(call_id=call_id, cseq_number=1,
+                                          cseq_method="MESSAGE")
+    if response.status_code() in (401, 407):
+        response, _ = sip._maybe_auth_resend(
+            stream, response, "MESSAGE", target_uri, headers, body,
+            user, password, transport, local_ip, local_port, 5,
+        )
+    return response
+
+
+def run_messages(sip, state: dict, *, station: str, target: str | None,
+                 call: bool, transport: str, timeout: float,
+                 messages: list[tuple[str, str, str]], pause: float) -> None:
+    """Register, optionally open a call to `station`, send each MESSAGE."""
+    domain = state["sip_domain"]
+    user, password = state["sip_username"], state["sip_password"]
+    gw = sip._build_gateway_config(domain, state["gateway_ip"], transport)
+    sock, local_ip, local_port = sip._build_socket(gw, timeout)
+    stream = sip.SipStream(sock)
+    session = None
+    try:
+        sip._register_client(stream, local_ip, local_port, gw, user, password)
+        if target:
+            target_uri = target if target.startswith("sip:") else f"sip:{target}@{domain}"
+        else:
+            target_uri = f"sip:{station}@{domain}"
+        if call:
+            door = sip.DoorSpec(name=station, station_id=station,
+                                address=f"sip:{station}@{domain}",
+                                unlock_body="1", index=None)
+            session = sip._start_invite_call(
+                stream, local_ip, local_port, gw, user, password, door,
+                min(timeout, sip.DEFAULT_INVITE_TIMEOUT),
+                sip._guess_media_ip(gw.gw_host), "0.0.0.0",
+            )
+            stream.sock.settimeout(timeout)
+            if not target:
+                target_uri = session.target_uri
+            print(f"Call to station {station} established: {session.established}")
+
+        for n, (label, content_type, body) in enumerate(messages, start=1):
+            print(f"\n[{n}/{len(messages)}] {label}\n  to   {target_uri}\n"
+                  f"  type {content_type}\n  body {body}")
+            try:
+                response = send_message(sip, stream, local_ip, local_port, gw,
+                                        user, password, target_uri, body, content_type)
+                print(f"  -> {response.start_line}")
+                if response.body:
+                    print(f"     {response.body[:300]!r}")
+            except (RuntimeError, TimeoutError, OSError) as err:
+                print(f"  -> error: {err}")
+            if n < len(messages):
+                answer = input("  Did the relay click? [s = yes, stop / Enter = next] ")
+                if answer.strip().lower() in ("s", "si", "y", "yes"):
+                    print(f"\nWORKING COMMAND: type {content_type}, body {body}, "
+                          f"to {target_uri}, call={call}")
+                    return
+                time.sleep(pause)
+    finally:
+        if session is not None:
+            try:
+                if session.established:
+                    sip._send_bye(stream, local_ip, local_port, gw, user, password, session)
+                else:
+                    sip._cancel_invite(stream, local_ip, local_port, gw, session, timeout)
+            except (ConnectionError, OSError, TimeoutError, RuntimeError) as err:
+                print(f"(call teardown: {err})")
+            session.close_media()
+        sock.close()
+
+
+def _confirm(what: str) -> None:
+    answer = input(f"This may ACTIVATE {what}. Make sure the gate/garage is safe "
+                   "to move. Type SI to continue: ")
+    if answer.strip().upper() != "SI":
+        sys.exit("Cancelled.")
+
+
+def _paired_state() -> dict:
+    state = load_state()
+    if not state.get("paired") or "sip_password" not in state:
+        sys.exit("Not paired yet (or no SIP password in the access list).")
+    return state
+
+
+def cmd_relay(args: argparse.Namespace) -> None:
+    _, sip = load_community(args.ref)
+    state = _paired_state()
+    variants = relay_variants(args.addr)
+    if args.variant:
+        variants = [variants[args.variant - 1]]
+    print("Variants:")
+    for n, (label, ctype, body) in enumerate(relay_variants(args.addr), start=1):
+        print(f"  {n}. {label}: {ctype} {body}")
+    _confirm(f"the relay at address {args.addr}")
+    run_messages(sip, state, station=args.station, target=args.target,
+                 call=not args.no_call, transport=args.transport,
+                 timeout=args.timeout, messages=variants, pause=args.pause)
+
+
+def cmd_raw(args: argparse.Namespace) -> None:
+    _, sip = load_community(args.ref)
+    state = _paired_state()
+    _confirm(f"whatever body '{args.body}' controls")
+    run_messages(sip, state, station=args.station, target=args.target,
+                 call=not args.no_call, transport=args.transport,
+                 timeout=args.timeout,
+                 messages=[("raw", args.content_type, args.body)], pause=0)
+
+
+# --------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -341,6 +504,30 @@ def main() -> None:
     p.add_argument("--transport", choices=("tls", "tcp"), default="tls")
     p.add_argument("--timeout", type=float, default=5.0)
     p.set_defaults(func=cmd_unlock)
+
+    def add_session_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--station", default="100000001",
+                       help="outdoor station to call first (default 100000001)")
+        p.add_argument("--target", help="send the MESSAGE to this SIP id/URI "
+                       "instead of the station (e.g. an actuator id from 'show')")
+        p.add_argument("--no-call", action="store_true",
+                       help="send without opening a call to the station first")
+        p.add_argument("--transport", choices=("tls", "tcp"), default="tls")
+        p.add_argument("--timeout", type=float, default=5.0)
+
+    p = sub.add_parser("relay", help="try actuator commands for one relay address")
+    p.add_argument("--addr", required=True, help="relay/actuator address, e.g. 10 or 20")
+    p.add_argument("--variant", type=int, choices=range(1, 7),
+                   help="send only this variant (1-6); default tries all")
+    p.add_argument("--pause", type=float, default=2.0)
+    add_session_args(p)
+    p.set_defaults(func=cmd_relay)
+
+    p = sub.add_parser("raw", help="send one MESSAGE with any body")
+    p.add_argument("--body", required=True)
+    p.add_argument("--content-type", default="text/plain")
+    add_session_args(p)
+    p.set_defaults(func=cmd_raw)
 
     args = parser.parse_args()
     if args.command == "pair" and not args.resume and not (args.ip and args.gateway_uuid):
