@@ -434,7 +434,8 @@ final class SIPClient {
         String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(length))
     }
 
-    private func withTimeout<T>(_ step: String, _ work: @escaping () async throws -> T) async throws -> T {
+    private func withTimeout<T: Sendable>(_ step: String,
+                                          _ work: @escaping () async throws -> T) async throws -> T {
         let seconds = timeout
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await work() }
