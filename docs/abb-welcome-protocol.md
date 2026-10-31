@@ -20,8 +20,9 @@ account — interoperability, as the open-source Home Assistant integrations do.
   (`INVITE → MESSAGE → BYE`).
 - **Relays / switch actuators** (verified on this installation): body
   `b:<actuator address>` (`Content-Type: text/plain`), sent as a `MESSAGE` to
-  the outdoor station **inside a call** (`INVITE → MESSAGE → BYE`, same as the
-  second lock). *Basculante-citofono* = `b:20` and *Cancello-citofono* = `b:10`, both verified.
+  the outdoor station `sip:100000001@<domain>` after `REGISTER`. Works both
+  inside a call (`INVITE → MESSAGE → BYE`) and **without a call** (plain
+  `REGISTER → MESSAGE`, verified for `b:10`). *Basculante-citofono* = `b:20` and *Cancello-citofono* = `b:10`, both verified.
   Note that the community `SIPClient` rewrites any
   `b:` body to `1`, so `unlock --body b:20` would just open the door: use the
   probe's `relay`/`raw` commands, which send the body unchanged.
@@ -32,8 +33,7 @@ account — interoperability, as the open-source Home Assistant integrations do.
 1. **Remote unlock**: the official app reportedly works from outside, but the
    community code is LAN-only. The route the app uses is unknown (the globe icon
    on the outdoor station hints at an internet path).
-2. **Relè**: solved, see above (`b:<addr>` in a call). Still to check: whether
-   it also works without the call (`--no-call`).
+2. **Relè**: solved, see above (`b:<addr>`, no call needed).
 3. **Your hardware model** — decides which integration variant applies.
 
 ## Decision for v1

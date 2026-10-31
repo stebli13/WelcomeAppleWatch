@@ -81,11 +81,12 @@ $PY tools/abb_probe.py --verbose relay --addr 10
 ```
 
 **Result on this installation: variant 6 works**, i.e. `text/plain` body
-`b:<addr>` to the station inside a call. To fire a relay directly:
+`b:<addr>` to the station, with or without a call (`--no-call` works too and is
+quicker). To fire a relay directly:
 
 ```bash
-$PY tools/abb_probe.py relay --addr 20 --variant 6   # Basculante-citofono
-$PY tools/abb_probe.py relay --addr 10 --variant 6   # Cancello-citofono
+$PY tools/abb_probe.py relay --addr 20 --variant 6 --no-call   # Basculante-citofono
+$PY tools/abb_probe.py relay --addr 10 --variant 6 --no-call   # Cancello-citofono
 ```
 
 - Add `--no-call` to send without opening a call to the station first,
