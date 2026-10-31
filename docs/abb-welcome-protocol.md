@@ -21,8 +21,8 @@ account — interoperability, as the open-source Home Assistant integrations do.
 - **Relays / switch actuators** (verified on this installation): body
   `b:<actuator address>` (`Content-Type: text/plain`), sent as a `MESSAGE` to
   the outdoor station **inside a call** (`INVITE → MESSAGE → BYE`, same as the
-  second lock). *Basculante-citofono* = `b:20` works; *Cancello-citofono* is
-  expected to be `b:10`. Note that the community `SIPClient` rewrites any
+  second lock). *Basculante-citofono* = `b:20` and *Cancello-citofono* = `b:10`, both verified.
+  Note that the community `SIPClient` rewrites any
   `b:` body to `1`, so `unlock --body b:20` would just open the door: use the
   probe's `relay`/`raw` commands, which send the body unchanged.
 - **Hardware named**: ABB 83342 IP gateway, M2240x / ASI22 Wi-Fi indoor station.
